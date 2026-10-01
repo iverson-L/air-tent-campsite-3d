@@ -12,13 +12,14 @@ An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, 
   - 2× Block 10 under a 7 × 6 m flysheet, with Block 05 docked on one of them
   - a Block 10 + 09 + 05 unit and a free-standing Block 05 facing the campfire
   - egg-roll tables, folding chairs, lanterns, cooler, kitchen crate, entrance rugs
-  - festoon lights on poles round the campfire, trees, and a koi pond with lily pads and reeds
+  - festoon lights on poles round the campfire, trees, and a koi pond with lily pads and reeds — wade in, swim, and hold C to dive in first-person mode, or sit on the stool and press E to go fishing
 - Detailed tent models, each with:
   - leaning walls, rounded edges and see-through mesh windows
   - roll-up flaps, an inflatable air frame with fabric sleeves and a camping lantern
   - a PVC bathtub floor, a snow skirt and an air bed or sofa
 - Adjustable gap between the tents, with flysheet coverage readout
 - Day / night mode (lanterns, string lights, campfire)
+- Shortcuts: `E` fishing · `1` flysheet · `2` labels · `3` lights on/off · `4` night mode · `Tab` debug
 - WASD flies the orbit view; first-person walk mode: WASD + mouse look, or on-screen joysticks for touch / remote desktop
 - Dimension labels and a debug compass
 

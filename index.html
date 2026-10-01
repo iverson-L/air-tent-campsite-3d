@@ -106,6 +106,14 @@
     background: rgba(20,22,26,.72); color: #f3f4f6; font-size: 12px; padding: 8px 14px; border-radius: 999px; white-space: nowrap; pointer-events: none; }
   .keys { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.8; }
   .keys kbd { font: 600 10.5px/1 ui-monospace, monospace; color: var(--muted); background: #f1f3f6; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; }
+  #fishBtn { margin-top: 8px; background: #2f7a5b; }
+  #fishBtn kbd { font: 600 10.5px/1 ui-monospace, monospace; background: rgba(255,255,255,.2); border-radius: 4px; padding: 2px 5px; margin-left: 4px; }
+  /* fishing prompt / status pill (tap = E) */
+  #fishHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
+    background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
+  #fishHud kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.18); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
+  #fishHud.alert { background: #c2410c; animation: fishPulse .35s ease-in-out infinite alternate; }
+  @keyframes fishPulse { to { transform: translateX(-50%) scale(1.08); } }
   #walkHint kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.16); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
 
   .dim-label { background: rgba(20,20,20,.78); color: #fff; padding: 2px 8px; border-radius: 5px; font-size: 12px; white-space: nowrap; pointer-events: none; }
@@ -163,7 +171,8 @@
   <div id="osLook"><div id="osKnob"></div></div>
 </div>
 <div id="app"></div>
-<div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release</div>
+<div id="fishHud"></div>
+<div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck / dive in the pond · <kbd>E</kbd> fish (at the stool) · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release</div>
 
 <button id="openPanel" title="Open settings">⚙ Settings</button>
 <aside id="panel">
@@ -176,18 +185,20 @@
     <div class="field"><span>Gap between tents</span><span class="chip" id="gapVal">3.40 m</span></div>
     <input type="range" id="gapSlider" min="3.3" max="3.8" step="0.05" value="3.4" />
     <div id="coverage" class="status"></div>
+    <label class="toggle"><span>Debug view direction <kbd>Tab</kbd></span><input type="checkbox" id="debugDirChk" /></label>
   </details>
 
   <details open><summary>Display</summary>
-    <label class="toggle"><span>Flysheet</span><input type="checkbox" id="showFly" checked /></label>
-    <label class="toggle"><span>Dimension labels</span><input type="checkbox" id="showLabels" checked /></label>
-    <label class="toggle"><span>Night mode</span><input type="checkbox" id="nightMode" /></label>
+    <label class="toggle"><span>Flysheet <kbd>1</kbd></span><input type="checkbox" id="showFly" checked /></label>
+    <label class="toggle"><span>Dimension labels <kbd>2</kbd></span><input type="checkbox" id="showLabels" checked /></label>
+    <label class="toggle"><span>Lights <kbd>3</kbd></span><input type="checkbox" id="lightsOn" checked /></label>
+    <label class="toggle"><span>Night mode <kbd>4</kbd></span><input type="checkbox" id="nightMode" /></label>
   </details>
 
   <details open><summary>Controls</summary>
     <button id="walkBtn" class="btn">🚶 First person mode</button>
+    <button id="fishBtn" class="btn">🎣 Go fishing <kbd>E</kbd></button>
     <label class="toggle"><span>On-screen controls <kbd>B</kbd></span><input type="checkbox" id="osControlsChk" checked /></label>
-    <label class="toggle"><span>Debug view direction <kbd>V</kbd></span><input type="checkbox" id="debugDirChk" /></label>
     <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move the view · <kbd>Shift</kbd> slow · drag to orbit, scroll to zoom</div>
   </details>
 
@@ -274,6 +285,7 @@ const GRAVITY = 9.8; // m/s²
 let jumpVy = 0, grounded = true;
 const fpControls = new PointerLockControls(camera, renderer.domElement);
 const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false };
+let fishing = null; // the pond's fishing spot (set up with the pond; E to fish)
 // a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
 // page loses focus, and ignore WASD while Ctrl/Cmd/Alt is down (macOS drops the keyup of keys released under Cmd).
 function releaseKeys() { for (const k in keys) keys[k] = false; }
@@ -281,6 +293,9 @@ window.addEventListener('blur', releaseKeys);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseKeys(); });
 window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) { if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys(); return; }
+  // E → fishing (sit down / cast / strike); moving or Esc stands you up again
+  if (e.code === 'KeyE' && !e.repeat) fishing?.onE();
+  if (fishing?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape'].includes(e.code)) { fishing.stop(); return; }
   if (e.code === 'KeyW') keys.w = true;
   if (e.code === 'KeyA') keys.a = true;
   if (e.code === 'KeyS') keys.s = true;
@@ -298,12 +313,21 @@ window.addEventListener('keydown', e => {
   // Space → jump (first person mode only)
   if (e.code === 'Space' && walking) {
     e.preventDefault(); // stop page scroll + re-clicking the focused button
-    if (!e.repeat && grounded) { jumpVy = JUMP_V; grounded = false; }
+    if (!e.repeat && grounded && !inPond) { jumpVy = JUMP_V; grounded = false; } // no jumping while wading/swimming
   }
-  // V → toggle debug view-direction indicator
-  if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  // Tab → toggle the debug view-direction indicator (instead of moving focus)
+  if (e.code === 'Tab') {
+    e.preventDefault();
     dbgChk.checked = !dbgChk.checked;
     updateDbg();
+  }
+  // 1 flysheet · 2 dimension labels · 3 lights · 4 night mode (same as flipping the panel switches)
+  const toggleKeys = { Digit1: 'showFly', Digit2: 'showLabels', Digit3: 'lightsOn', Digit4: 'nightMode',
+    Numpad1: 'showFly', Numpad2: 'showLabels', Numpad3: 'lightsOn', Numpad4: 'nightMode' };
+  if (toggleKeys[e.code] && !e.repeat) {
+    const el = document.getElementById(toggleKeys[e.code]);
+    el.checked = !el.checked;
+    el.dispatchEvent(new Event('change'));
   }
 });
 window.addEventListener('keyup', e => {
@@ -680,7 +704,8 @@ const grassTex = makeGrassTexture();
 grassTex.repeat.set(90 / TILE_M, 90 / TILE_M);
 // pond (per user) in the open grass left of the site: an organic blob outline (world x/z, ≈ 9 × 7 m). The grass gets a
 // HOLE there so the basin below can be seen through the clear water (see the pond section further down).
-const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 0.75 };
+const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 1.8, // 1.8 m in the middle: deep enough to swim (per user)
+  fishA: -0.12 };                                  // bank angle of the fishing spot (east bank, facing the camp side)
 const pondR = a => POND.R * (1 + 0.11 * Math.sin(2 * a + 1.0) + 0.07 * Math.sin(3 * a + 2.2) + 0.04 * Math.sin(5 * a + 0.4));
 const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
   const a = i / n * Math.PI * 2, r = pondR(a) * k;
@@ -4379,11 +4404,37 @@ const pond = (() => {
   g.position.set(P.x, 0, P.z);
   scene.add(g);
 
+  // UNDERWATER ABSORPTION (per user: the water had no depth): anything below the surface fades toward a deep-water
+  // colour with its depth below the surface (Beer–Lambert: 1 − e^(−d / 0.3 m)), so the shallows show sandy bed, the
+  // middle goes dark and deeper koi look dimmer. Applied to the bed and the koi; the surface itself stays clear.
+  const uwColor = new THREE.Color(0x0e2c31);
+  let night = false, under = false;
+  const applyUw = () => uwColor.set(under ? (night ? 0x0b2c33 : 0x2d6f76) : (night ? 0x05141a : 0x0e2c31));
+  const underwater = mat => {
+    mat.onBeforeCompile = sh => {
+      sh.uniforms.uwColor = { value: uwColor };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying float vUwY;')
+        .replace('#include <project_vertex>', `#include <project_vertex>
+          #ifdef USE_INSTANCING
+            vUwY = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).y;
+          #else
+            vUwY = (modelMatrix * vec4(transformed, 1.0)).y;
+          #endif`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vUwY;\nuniform vec3 uwColor;')
+        .replace('#include <opaque_fragment>', `#include <opaque_fragment>
+          float uwD = max(${Y.toFixed(3)} - vUwY, 0.0);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, uwColor, (1.0 - exp(-uwD / 0.3)) * 0.94);`);
+    };
+    return mat;
+  };
+
   // basin: rings from just under the grass edge down to the bottom (deepest in the middle); sandy at the rim,
   // dark silt in the depths (vertex colours)
   {
     const N = 120, K = 14, pos = [], col = [], idx = [];
-    const rim = new THREE.Color(0x8a7a58), deep = new THREE.Color(0x26302a), c = new THREE.Color();
+    const rim = new THREE.Color(0x9c8a62), deep = new THREE.Color(0x5a5640), c = new THREE.Color(); // the water's absorption does the darkening
     for (let k = 0; k <= K; k++) {
       const s = k / K, scale = k === 0 ? 1.02 : 1 - 0.95 * s, y = k === 0 ? -0.004 : -P.depth * (1 - (1 - s) ** 2);
       c.copy(rim).lerp(deep, Math.min(1, s * 1.6));
@@ -4405,9 +4456,24 @@ const pond = (() => {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    const basin = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide }));
+    const basin = new THREE.Mesh(geo, underwater(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide })));
     basin.receiveShadow = true;
     g.add(basin);
+
+    // pebbles and stones on the bed (they fade with depth like everything under the surface)
+    const n = 26, peb = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0),
+      underwater(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true })), n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pp = new THREE.Vector3(), cc = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      const f = 0.12 + Math.random() * 0.8, a = Math.random() * Math.PI * 2, [x, z] = local(f, a);
+      const sb = (1 - f) / 0.95, y = -P.depth * (1 - (1 - sb) ** 2), r = 0.04 + Math.random() * (i < 8 ? 0.16 : 0.07);
+      pp.set(x, y + r * 0.1, z); sc.set(r * (1 + Math.random() * 0.6), r * 0.5, r); // half-buried in the silt
+      q.setFromEuler(new THREE.Euler(Math.random(), Math.random() * 6, Math.random()));
+      peb.setMatrixAt(i, m4.compose(pp, q, sc));
+      peb.setColorAt(i, cc.setHSL(0.09 + Math.random() * 0.06, 0.12, 0.2 + Math.random() * 0.12));
+    }
+    peb.receiveShadow = true;
+    g.add(peb);
   }
 
   // water: a slightly inset copy of the outline just below the grass. Clear tinted surface, a tileable ripple normal
@@ -4437,12 +4503,25 @@ const pond = (() => {
   const envDay = skyEnv(skyDayTex), envNight = skyEnv(skyNightTex);
   pmrem.dispose();
   const waterMat = new THREE.MeshStandardMaterial({ color: 0x2c5d66, roughness: 0.05, metalness: 0.0, transparent: true,
-    opacity: 0.62, envMap: envDay, envMapIntensity: 1.4, normalMap: rippleTex, normalScale: new THREE.Vector2(0.3, 0.3) });
+    opacity: 0.38, envMap: envDay, envMapIntensity: 1.4, normalMap: rippleTex, normalScale: new THREE.Vector2(0.3, 0.3),
+    side: THREE.DoubleSide, forceSinglePass: true }); // seen from below too, when diving. Single pass: three's two-pass
+                                                     // transparent double-siding flips gl_FrontFacing in the back pass
   // Fresnel: looking straight down you see the koi; at shallow angles the surface turns reflective and hides them
+  // From BELOW (diving) the surface is only see-through inside Snell's window (≈ 49° round straight up); outside it,
+  // total internal reflection mirrors the dark depths back down
   waterMat.onBeforeCompile = sh => {
-    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
-      float fres = pow(1.0 - clamp(dot(geometryNormal, geometryViewDir), 0.0, 1.0), 3.0);
-      gl_FragColor.a = mix(gl_FragColor.a, 0.97, fres);`);
+    sh.uniforms.uwColor = { value: uwColor };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uwColor;')
+      .replace('#include <opaque_fragment>', `#include <opaque_fragment>
+      float ndv = clamp(dot(geometryNormal, geometryViewDir), 0.0, 1.0);
+      if (gl_FrontFacing) {
+        gl_FragColor.a = mix(gl_FragColor.a, 0.97, pow(1.0 - ndv, 3.0));
+      } else {
+        float win = smoothstep(0.6, 0.72, ndv);  // 1 inside Snell's window (cos 48.6° ≈ 0.66)
+        gl_FragColor.rgb = mix(uwColor * 1.15, gl_FragColor.rgb, win);
+        gl_FragColor.a = mix(1.0, 0.35, win);
+      }`);
   };
   const waterShape = new THREE.Shape(Array.from({ length: 120 }, (_, i) => { const [x, z] = local(0.995, i / 120 * Math.PI * 2); return new THREE.Vector2(x, -z); }));
   const water = new THREE.Mesh(new THREE.ShapeGeometry(waterShape, 4), waterMat);
@@ -4461,7 +4540,7 @@ const pond = (() => {
     let k = 0;
     for (let i = 0; i < 80 && k < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      if (reedAngles.some(r => Math.abs(Math.atan2(Math.sin(a - r), Math.cos(a - r))) < 0.28)) continue;
+      if ([...reedAngles, P.fishA].some(r => Math.abs(Math.atan2(Math.sin(a - r), Math.cos(a - r))) < 0.28)) continue; // reeds + fishing spot
       const sc = 0.12 + Math.random() * 0.26, [x, z] = local(1.0 + Math.random() * 0.06, a);
       p.set(x, sc * 0.25, z); s.set(sc * (1 + Math.random() * 0.5), sc * (0.6 + Math.random() * 0.3), sc);
       q.setFromEuler(new THREE.Euler(Math.random(), Math.random() * 6, Math.random()));
@@ -4478,7 +4557,7 @@ const pond = (() => {
     const stemGeo = new THREE.CylinderGeometry(0.004, 0.009, 1, 5); stemGeo.translate(0, 0.5, 0);
     const headGeo = new THREE.CapsuleGeometry(0.017, 0.11, 3, 8);
     const N = reedAngles.length * 16;
-    const stems = new THREE.InstancedMesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }), N);
+    const stems = new THREE.InstancedMesh(stemGeo, underwater(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 })), N);
     const heads = new THREE.InstancedMesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 }), N);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3();
     let k = 0, kh = 0;
@@ -4543,7 +4622,7 @@ const pond = (() => {
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
   };
   const koiTypes = [['#f4f1ea', '#e0461c', 5], ['#e8681e', '#f6efe4', 3], ['#f2b632', '#f7e2a0', 2], ['#1d1d1f', '#e2571e', 4], ['#f4f1ea', '#1d1d1f', 4], ['#e0461c', '#e0461c', 0]];
-  const finMat = new THREE.MeshStandardMaterial({ color: 0xf6e7d8, roughness: 0.5, transparent: true, opacity: 0.75, side: THREE.DoubleSide });
+  const finMat = underwater(new THREE.MeshStandardMaterial({ color: 0xf6e7d8, roughness: 0.5, transparent: true, opacity: 0.75, side: THREE.DoubleSide }));
   const tailShape = new THREE.Shape();
   tailShape.moveTo(0, 0);
   tailShape.quadraticCurveTo(-0.06, 0.05, -0.075, 0.12);
@@ -4553,15 +4632,21 @@ const pond = (() => {
   const tailGeo = new THREE.ShapeGeometry(tailShape, 6); tailGeo.rotateX(-Math.PI / 2); // shape +y → backwards (−z)
   const finGeo = new THREE.CircleGeometry(0.035, 10); finGeo.scale(1, 0.55, 1); finGeo.rotateX(-Math.PI / 2);
   const bodyGeo = new THREE.SphereGeometry(1, 20, 12);
-  const fish = koiTypes.concat(koiTypes.slice(0, 2)).map(([b, pch, n], i) => {
-    const f = new THREE.Group(), L = 0.85 + Math.random() * 0.35;
-    const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ map: koiTex(b, pch, n), roughness: 0.35 }));
+  const koiNames = ['Kohaku', 'Kujaku', 'Yamabuki Ogon', 'Showa', 'Shiro Utsuri', 'Benigoi'];
+  // one koi (body ≈ 45 cm long incl. tail at scale 1), facing +z; also used for the fish you catch (fishing spot)
+  const buildKoi = ([b, pch, n]) => {
+    const f = new THREE.Group();
+    const body = new THREE.Mesh(bodyGeo, underwater(new THREE.MeshStandardMaterial({ map: koiTex(b, pch, n), roughness: 0.35 })));
     body.scale.set(0.05, 0.042, 0.18); f.add(body);
     const tail = new THREE.Mesh(tailGeo, finMat); tail.position.z = -0.165; f.add(tail);
     for (const sx of [-1, 1]) {
       const fin = new THREE.Mesh(finGeo, finMat);
       fin.position.set(sx * 0.055, -0.01, 0.06); fin.rotation.y = sx * 0.6; f.add(fin);
     }
+    return { f, tail };
+  };
+  const fish = koiTypes.concat(koiTypes.slice(0, 2)).map((type, i) => {
+    const { f, tail } = buildKoi(type), L = 0.85 + Math.random() * 0.35;
     f.scale.setScalar(L);
     g.add(f);
     return { f, tail, cx: (Math.random() - 0.5) * 1.2, cz: (Math.random() - 0.5) * 0.9, a: 0.9 + Math.random() * 1.2,
@@ -4581,7 +4666,22 @@ const pond = (() => {
         k.tail.rotation.y = 0.45 * Math.sin(t * 8 + k.ph + 1.2);
       }
     },
-    setNight(on) { waterMat.envMap = on ? envNight : envDay; waterMat.color.set(on ? 0x14303a : 0x2c5d66); },
+    // a fresh koi of a random variety (for the catch): { f, tail, name } — not added to the scene
+    makeKoi() { const i = Math.random() * koiTypes.length | 0; return { ...buildKoi(koiTypes[i]), name: koiNames[i] }; },
+    // water at world (x, z)? → { bedY, waterY } (bed height from the same profile as the basin), or null on dry land
+    depthAt(x, z) {
+      const dx = (x - P.x) / P.sx, dz = z - P.z, a = Math.atan2(dz, dx), f = Math.hypot(dx, dz) / pondR(a);
+      if (f >= 0.99) return null;
+      const sb = Math.min(1, (1 - f) / 0.95);
+      return { bedY: -P.depth * (1 - (1 - sb) ** 2), waterY: Y };
+    },
+    setNight(on) {
+      waterMat.envMap = on ? envNight : envDay; waterMat.color.set(on ? 0x14303a : 0x2c5d66);
+      night = on; applyUw();                      // deep water darkens at night
+    },
+    // diving: with the eye under the surface the absorption colour lifts (the fog does the distance murk instead),
+    // otherwise everything down there went near-black
+    setUnder(on) { under = on; applyUw(); },
   };
 })();
 
@@ -5044,6 +5144,233 @@ function buildLightPole(x, z, away) {
   return new THREE.Vector3(x, HP - 0.03, z);
 }
 
+// ---------- fishing spot (per user): folding stool, rod on a forked rest and a bucket on the pond's east bank.
+// E sits you down and casts; wait for the bobber to dip, press E on the bite to reel a koi in (then it's released).
+// WASD / Esc stands you up. The 🎣 button in the panel and tapping the hint do the same on touch screens. ----------
+fishing = (() => {
+  const P = POND, M = chairMats, V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const a0 = P.fishA, edgeR = pondR(a0);
+  const edge = V(P.x + Math.cos(a0) * edgeR * P.sx, 0, P.z + Math.sin(a0) * edgeR);
+  const out = V(Math.cos(a0) / P.sx, 0, Math.sin(a0)).normalize();      // outward from the water (ellipse normal)
+  const seat = edge.clone().addScaledVector(out, 0.85);
+  const g = new THREE.Group();                                         // local +z faces the water
+  g.position.copy(seat); g.rotation.y = Math.atan2(-out.x, -out.z);
+  scene.add(g);
+  const toWorld = v => g.localToWorld(v.clone());
+  g.updateMatrixWorld(true);
+
+  // folding stool: two X-frames, top rails, khaki canvas sling (seat 42 cm)
+  const SH = 0.42;
+  for (const sx of [-0.17, 0.17]) {
+    g.add(bentTube([V(sx, 0.01, -0.15), V(sx, SH - 0.02, 0.15)], 0.01, M.frame), bentTube([V(sx, 0.01, 0.15), V(sx, SH - 0.02, -0.15)], 0.01, M.frame));
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.035, 8), M.black);
+    pin.rotation.z = Math.PI / 2; pin.position.set(sx, (SH - 0.01) / 2, 0); g.add(pin);
+  }
+  for (const sz of [-0.15, 0.15]) g.add(bentTube([V(-0.19, SH - 0.02, sz), V(0.19, SH - 0.02, sz)], 0.01, M.frame));
+  g.add(sling((u, v, o) => o.set(-0.17 + 0.34 * u, SH - 0.012 - 0.02 * Math.sin(Math.PI * u), 0.15 - 0.3 * v), 8, 6, M.canvas));
+  // bucket beside the stool
+  const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.26, 18, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x3b6e8f, roughness: 0.6, side: THREE.DoubleSide }));
+  bucket.position.set(-0.42, 0.13, 0.05); g.add(bucket);
+  const bucketBase = new THREE.Mesh(new THREE.CircleGeometry(0.11, 18), bucket.material);
+  bucketBase.rotation.x = -Math.PI / 2; bucketBase.position.set(-0.42, 0.005, 0.05); g.add(bucketBase);
+  const bail = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.003, 4, 20, Math.PI), M.black);
+  bail.position.set(-0.42, 0.26, 0.05); bail.rotation.y = 0.3; g.add(bail);
+  // forked rod rest pushed into the bank at the water's edge
+  const restZ = 0.85 - 0.18, restTop = V(0.32, 0.56, restZ);
+  g.add(bentTube([V(0.32, -0.05, restZ), restTop], 0.008, M.frame));
+  for (const sx of [-1, 1]) g.add(bentTube([restTop, V(0.32 + sx * 0.035, 0.63, restZ)], 0.006, M.frame));
+
+  // rod: 2.4 m carbon blank + cork grip + spinning reel + guides; its group's +z runs butt → tip
+  const ROD_L = 2.4;
+  const rod = new THREE.Group();
+  const blankGeo = new THREE.CylinderGeometry(0.003, 0.008, ROD_L - 0.3, 8); blankGeo.rotateX(Math.PI / 2); blankGeo.translate(0, 0, 0.3 + (ROD_L - 0.3) / 2);
+  rod.add(new THREE.Mesh(blankGeo, new THREE.MeshStandardMaterial({ color: 0x1f2a24, roughness: 0.35, metalness: 0.3 })));
+  const gripGeo = new THREE.CylinderGeometry(0.014, 0.013, 0.32, 12); gripGeo.rotateX(Math.PI / 2); gripGeo.translate(0, 0, 0.16);
+  rod.add(new THREE.Mesh(gripGeo, new THREE.MeshStandardMaterial({ color: 0xb9925e, roughness: 0.9 })));
+  const reelMat = new THREE.MeshStandardMaterial({ color: 0x2b2d31, roughness: 0.4, metalness: 0.6 });
+  const spool = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.035, 16), reelMat);
+  spool.rotation.x = Math.PI / 2; spool.position.set(0, -0.06, 0.36); rod.add(spool);
+  rod.add(bentTube([V(0, -0.012, 0.34), V(0, -0.045, 0.36)], 0.004, reelMat));
+  const crank = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.005, 0.008), reelMat); crank.position.set(0.03, -0.06, 0.36); rod.add(crank);
+  for (const [z, r] of [[0.7, 0.012], [1.2, 0.009], [1.7, 0.007], [2.1, 0.005]]) {
+    const guide = new THREE.Mesh(new THREE.TorusGeometry(r, 0.0015, 4, 12), reelMat);
+    guide.position.set(0, -0.01 - r, z); rod.add(guide);
+  }
+  rod.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  g.add(rod);
+  const tipWorld = () => rod.localToWorld(V(0, 0, ROD_L));
+  // pose the rod: butt at `butt` (local to g), pointing at `aim` (local to g)
+  const pose = (butt, aim) => { rod.position.copy(butt); rod.lookAt(toWorld(aim)); };
+  const restPose = () => pose(V(0.32, 0.02, -0.35), restTop.clone().add(V(0, 0.012, 0)));
+  restPose();
+
+  // bobber (red top / white bottom) + line
+  const bobber = new THREE.Group();
+  const red = new THREE.MeshStandardMaterial({ color: 0xd9381e, roughness: 0.4 }), white = new THREE.MeshStandardMaterial({ color: 0xf4f4f0, roughness: 0.4 });
+  bobber.add(new THREE.Mesh(new THREE.SphereGeometry(0.022, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), red));
+  bobber.add(new THREE.Mesh(new THREE.SphereGeometry(0.022, 14, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), white));
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.05, 6), red); stick.position.y = 0.04; bobber.add(stick);
+  scene.add(bobber);
+  const LINE_N = 24, linePos = new Float32Array(LINE_N * 3);
+  const lineGeo = new THREE.BufferGeometry(); lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.75 }));
+  line.frustumCulled = false;
+  scene.add(line);
+  const drawLine = (a, b, sag) => {
+    for (let i = 0; i < LINE_N; i++) {
+      const t = i / (LINE_N - 1), y = a.y + (b.y - a.y) * t - sag * 4 * t * (1 - t);
+      linePos.set([a.x + (b.x - a.x) * t, y, a.z + (b.z - a.z) * t], i * 3);
+    }
+    lineGeo.attributes.position.needsUpdate = true;
+  };
+
+  // HUD (the same pill as the walk hint, above it; tap = E)
+  const hud = document.getElementById('fishHud');
+  const say = (html, alert = false) => { hud.innerHTML = html; hud.style.display = 'block'; hud.classList.toggle('alert', alert); };
+  const hush = () => { hud.style.display = 'none'; hud.classList.remove('alert'); };
+  const IDLE = '<kbd>E</kbd> cast · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Esc</kbd> stand up';
+
+  let active = false, state = 'ready', tState = 0, biteAt = 0, caught = 0, saved = null, catchFish = null, catchName = '', catchCm = 0;
+  const target = V(0, 0, 0), from = V(0, 0, 0), look = V(0, 0, 0), eye = toWorld(V(0, 1.02, -0.08));
+  const go = s => { state = s; tState = 0; };
+
+  function start() {
+    if (active) return;
+    saved = { walking, pos: camera.position.clone(), quat: camera.quaternion.clone(), target: controls.target.clone() };
+    if (fpControls.isLocked) fpControls.unlock();
+    controls.enabled = false;
+    walkHint.style.display = 'none'; osControls.style.display = 'none';
+    releaseKeys();
+    active = true;
+    look.copy(toWorld(V(0, 0, 3)));
+    cast();
+  }
+  function stop() {
+    if (!active) return;
+    active = false; hush();
+    if (catchFish) { scene.remove(catchFish.f); catchFish = null; }
+    restPose();
+    if (saved.walking) {                    // stand up beside the stool, still in first person, facing the water
+      camera.position.copy(toWorld(V(0.15, 0, -0.55))); camera.position.y = EYE_H;
+      walkHint.style.display = 'block'; updateOS();
+    } else {                                // back to the orbit view you had
+      camera.position.copy(saved.pos); camera.quaternion.copy(saved.quat); controls.target.copy(saved.target);
+      controls.enabled = true; controls.update();
+    }
+  }
+  function cast() {
+    // a spot 3–4.5 m out over the water, a little to either side, that is actually in the pond
+    for (let k = 0; k < 20; k++) {
+      target.copy(toWorld(V((Math.random() - 0.5) * 1.6, 0, 0.85 + 3 + Math.random() * 1.5)));
+      const w = pond.depthAt(target.x, target.z);
+      if (w && w.waterY - w.bedY > 0.4) break;
+    }
+    target.y = P.waterY;
+    go('cast');
+    say('Casting…');
+  }
+  function onE() {
+    if (!active) {
+      // in first person you have to walk up to the stool; from the orbit view E takes you straight there
+      if (walking && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) > 2.5) return;
+      start(); return;
+    }
+    if (state === 'ready') cast();
+    else if (state === 'wait') { go('ready'); say('Too early — the fish swam off. ' + IDLE); }
+    else if (state === 'bite') {
+      catchFish = pond.makeKoi(); catchName = catchFish.name; catchCm = 28 + Math.round(Math.random() * 36);
+      catchFish.f.scale.setScalar(catchCm / 45);
+      scene.add(catchFish.f);
+      go('reel'); say('Reeling in…');
+    }
+  }
+
+  const _v = V(0, 0, 0);
+  function update(dt) {
+    const t = performance.now() * 0.001;
+    if (!active) {
+      // first-person prompt when you stand next to the stool
+      const near = walking && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) < 2.2;
+      if (near) say('<kbd>E</kbd> sit down and fish'); else if (hud.style.display !== 'none') hush();
+      // idle: the bobber hangs a little below the rod tip on the rest
+      const tip = tipWorld();
+      bobber.position.set(tip.x, tip.y - 0.3, tip.z);
+      drawLine(tip, bobber.position, 0);
+      return;
+    }
+    tState += dt;
+    const hands = V(0.1, 0.66, 0.2);
+    if (state === 'cast') {
+      // rod swings back (tip up and behind) then whips forward; the bobber flies a lob to the target
+      const k = Math.min(tState / 1.1, 1);
+      const pitch = k < 0.4 ? THREE.MathUtils.lerp(0.5, 1.45, k / 0.4) : THREE.MathUtils.lerp(1.45, 0.42, (k - 0.4) / 0.6);
+      pose(hands, hands.clone().add(V(0.05, Math.sin(pitch) * 2, Math.cos(pitch) * 2)));
+      const tip = tipWorld();
+      if (k < 0.45) { bobber.position.set(tip.x, tip.y - 0.3, tip.z); from.copy(bobber.position); }
+      else {
+        const f = (k - 0.45) / 0.55;
+        bobber.position.lerpVectors(from, target, f); bobber.position.y += Math.sin(Math.PI * f) * 1.2;
+      }
+      drawLine(tip, bobber.position, 0.05);
+      if (k >= 1) { go('wait'); biteAt = 3 + Math.random() * 6; say('Waiting for a bite… ' + IDLE.replace('cast', 'strike')); }
+    } else {
+      // rod held low over the water; tip lifts while reeling
+      const pitch = state === 'reel' || state === 'caught' ? 1.0 : 0.42;
+      pose(hands, hands.clone().add(V(0.05, Math.sin(pitch) * 2, Math.cos(pitch) * 2)));
+    }
+    const tip = tipWorld();
+    if (state === 'wait' || state === 'bite' || state === 'ready') {
+      let dip = 0;
+      if (state === 'wait') {
+        const pre = biteAt - tState;                       // two nibbles in the last 1.4 s before the bite
+        if (pre < 1.4 && pre > 0) dip = Math.max(0, Math.sin(pre * 9)) * 0.012;
+        if (tState >= biteAt) { go('bite'); say('Bite! Press <kbd>E</kbd>!', true); }
+      }
+      if (state === 'bite') {
+        dip = 0.06;                                        // pulled under, tugging sideways
+        if (tState > 1.3) { go('ready'); say('It got away… ' + IDLE); }
+      }
+      bobber.position.set(target.x + (state === 'bite' ? Math.sin(t * 13) * 0.02 : 0),
+        P.waterY + 0.008 + Math.sin(t * 2.4) * 0.004 - dip, target.z);
+      if (state === 'ready') { bobber.position.copy(tip); bobber.position.y -= 0.3; }
+      drawLine(tip, bobber.position, state === 'ready' ? 0 : 0.12);
+    }
+    if (state === 'reel' && catchFish) {
+      // the koi is dragged from the bobber to the bank below the rod tip, then lifted out, thrashing
+      const k = Math.min(tState / 1.8, 1);
+      const bank = toWorld(V(0.1, 0, 0.7)); bank.y = P.waterY - 0.05;
+      if (k < 0.75) { _v.lerpVectors(target, bank, k / 0.75); _v.y = P.waterY - 0.08; }
+      else { _v.copy(bank).lerp(V(tip.x, tip.y - 0.35, tip.z), (k - 0.75) / 0.25); }
+      catchFish.f.position.copy(_v);
+      catchFish.f.lookAt(k < 0.75 ? bank : V(_v.x, _v.y - 1, _v.z));
+      catchFish.tail.rotation.y = Math.sin(t * 24) * 0.6;
+      bobber.position.copy(_v); bobber.position.y += 0.12;
+      drawLine(tip, bobber.position, 0.02);
+      if (k >= 1) {
+        caught++;
+        go('caught');
+        say(`🎣 You caught a <b>${catchCm} cm ${catchName}</b> koi! &nbsp;(${caught} caught) — released back into the pond`);
+      }
+    }
+    if (state === 'caught' && catchFish) {
+      // dangling under the tip, wriggling; then let go
+      catchFish.f.position.set(tip.x, tip.y - 0.35 - catchCm / 200, tip.z);
+      catchFish.f.rotation.set(-Math.PI / 2 + Math.sin(t * 9) * 0.25, Math.sin(t * 5) * 0.4, 0);
+      catchFish.tail.rotation.y = Math.sin(t * 18) * 0.5;
+      bobber.position.set(tip.x, tip.y - 0.25, tip.z);
+      drawLine(tip, bobber.position, 0);
+      if (tState > 3.2) { scene.remove(catchFish.f); catchFish = null; go('ready'); say(IDLE); }
+    }
+    // seated view: eyes over the stool, looking at the bobber (or the catch), eased
+    const want = state === 'caught' && catchFish ? catchFish.f.position : (state === 'cast' || state === 'ready' ? toWorld(V(0, 0, 3.5)) : bobber.position);
+    look.lerp(want, Math.min(1, dt * 3));
+    camera.position.lerp(eye, Math.min(1, dt * 4));
+    camera.lookAt(look);
+  }
+  return { update, onE, start, stop, get active() { return active; } };
+})();
+
 // ---------- string lights (catenary between poles + anchor trees) ----------
 const bulbMat = new THREE.MeshStandardMaterial({ color: 0x3a3a30, emissive: 0xffc46b, emissiveIntensity: 0 });
 function makeString(p1, p2, sag) {
@@ -5086,24 +5413,33 @@ function setNight(on) {
   skyMat.map = on ? skyNightTex : skyDayTex;
   skyMat.needsUpdate = true;
   scene.fog.color.set(on ? 0x1a2440 : 0xcfe6f7);
+  wasUnder = null;                            // re-apply the underwater fog next frame if diving
   sunSprite.visible = !on;
   stars.visible = on;
   cloudMat.opacity = on ? 0.15 : 0.85;
   sun.intensity = on ? 0.35 : 1.6;          // moonlight
   sun.color.set(on ? 0x9db4ff : 0xfff2d9);
   hemi.intensity = on ? 0.25 : 0.85;
-  bulbMat.emissiveIntensity = on ? 2.4 : 0; // string bulbs glow
-  for (const l of tableLamps) { l.glow.emissiveIntensity = on ? 1.8 : 0; l.light.intensity = on ? 0.9 : 0; } // both table lanterns
-  stringLight.intensity = on ? 1.6 : 0;
   pond.setNight(on);                          // water reflects the night sky
   fireLight.intensity = on ? 2.6 : 1.2;
-  // tent lanterns brighten at night; the mesh screens pick up a warm glow from inside
+  applyLights();
+}
+// all the camp's artificial lights — tent lanterns, table lanterns, string/festoon bulbs — follow the Lights switch
+// (key 3, per user) and night mode; the campfire stays lit
+let lightsOn = true;
+function applyLights() {
+  const night = isNight && lightsOn;
+  bulbMat.emissiveIntensity = night ? 2.4 : 0;                  // string bulbs glow
+  stringLight.intensity = night ? 1.6 : 0;
+  for (const l of tableLamps) { l.glow.emissiveIntensity = night ? 1.8 : 0; l.light.intensity = night ? 0.9 : 0; }
+  // tent lanterns: on by day (they light the interiors), brighter at night; the mesh screens glow warm from inside
   for (const t of [tentL, tentR, block05, u3b10, u3b09, u3b05, solo05]) {
-    const L = t.userData.lantern;
-    if (L.userData.base === undefined) L.userData.base = L.intensity;
-    L.intensity = L.userData.base * (on ? 3 : 1);
-    t.userData.matGableMesh.emissive.set(on ? 0xffb46a : 0x000000);
-    t.userData.matGableMesh.emissiveIntensity = on ? 0.3 : 0;
+    const L = t.userData.lantern, G = t.userData.lanternGlow;
+    if (L.userData.base === undefined) { L.userData.base = L.intensity; G.userData.base = G.emissiveIntensity; }
+    L.intensity = lightsOn ? L.userData.base * (isNight ? 3 : 1) : 0;
+    G.emissiveIntensity = lightsOn ? G.userData.base : 0;
+    t.userData.matGableMesh.emissive.set(night ? 0xffb46a : 0x000000);
+    t.userData.matGableMesh.emissiveIntensity = night ? 0.3 : 0;
   }
 }
 
@@ -5210,6 +5546,9 @@ document.getElementById('showLabels').addEventListener('change', e => {
   labelRenderer.domElement.style.display = e.target.checked ? '' : 'none';
 });
 document.getElementById('nightMode').addEventListener('change', e => setNight(e.target.checked));
+document.getElementById('lightsOn').addEventListener('change', e => { lightsOn = e.target.checked; applyLights(); });
+document.getElementById('fishBtn').addEventListener('click', () => fishing.active ? fishing.stop() : fishing.start());
+document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
 document.getElementById('closePanel').addEventListener('click', () => {
   document.getElementById('panel').classList.add('hidden');
   document.getElementById('openPanel').style.display = 'block';
@@ -5236,11 +5575,15 @@ renderer.compile(scene, camera); // warm up every material now so the first fram
 
 const clock = new THREE.Clock();
 let firstFrame = true;
+let inPond = false, pondSpeed = 1, wasUnder = false; // swimming state (walk mode)
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3(); // orbit-view WASD temps
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
+  fishing?.update(dt);                        // fishing spot: prompt, cast/bite/reel, seated camera
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
-  if (walking) {
+  if (fishing?.active) {
+    // sitting on the fishing stool: the fishing spot drives the camera
+  } else if (walking) {
     // sync view angles from the camera: pointer-lock mouse look writes to it
     // directly between frames, so the look pad continues from where the mouse left off
     _eul.setFromQuaternion(camera.quaternion, 'YXZ');
@@ -5250,7 +5593,7 @@ renderer.setAnimationLoop(() => {
     let s = (keys.d ? 1 : 0) - (keys.a ? 1 : 0) + joyInput.s;
     const len = Math.hypot(f, s);
     if (len > 0.05) {
-      const dist = (keys.shift ? 2 : 4) * dt * Math.min(len, 1); // m/s — run by default, Shift = walk
+      const dist = (keys.shift ? 2 : 4) * dt * Math.min(len, 1) * pondSpeed; // m/s — run by default, Shift = walk; slower in water
       fpControls.moveForward((f / len) * dist);
       fpControls.moveRight((s / len) * dist);
     }
@@ -5262,9 +5605,21 @@ renderer.setAnimationLoop(() => {
       camera.rotation.set(pitch, yaw, 0, 'YXZ');
     }
     // eye level — C ducks (smooth), Space jumps with simple gravity
-    const targetH = keys.duck ? DUCK_H : EYE_H;
+    let targetH = keys.duck ? DUCK_H : EYE_H;
+    // POND (per user): wade in standing on the sloping bed; where it's too deep to stand, swim with the head just above
+    // the surface (gentle bob); hold C to dive under, release to come back up. Slower in the water, no jumping.
+    const water = grounded ? pond.depthAt(camera.position.x, camera.position.z) : null;
+    inPond = !!water;
+    pondSpeed = 1;
+    if (water) {
+      const standH = water.bedY + (keys.duck ? DUCK_H : EYE_H);
+      const floatH = water.waterY + 0.2 + 0.025 * Math.sin(performance.now() * 0.0018);
+      if (keys.duck) targetH = Math.max(water.bedY + 0.35, Math.min(water.bedY + DUCK_H, water.waterY - 0.6)); // dive
+      else targetH = Math.max(standH, floatH);
+      pondSpeed = standH >= floatH && !keys.duck ? 0.55 : 0.4;   // wading / swimming
+    }
     if (grounded) {
-      camera.position.y += (targetH - camera.position.y) * Math.min(1, dt * 12); // crouch/stand transition
+      camera.position.y += (targetH - camera.position.y) * Math.min(1, dt * (inPond ? 3 : 12)); // crouch/stand (slow in water)
       if (Math.abs(camera.position.y - targetH) < 0.005) camera.position.y = targetH; // settle exactly on the ground
     } else {
       jumpVy -= GRAVITY * dt;
@@ -5301,6 +5656,14 @@ renderer.setAnimationLoop(() => {
     const rr = camera.position.distanceTo(controls.target);
     controls.maxPolarAngle = Math.min(Math.PI * 0.95, Math.acos(THREE.MathUtils.clamp((0.3 - controls.target.y) / rr, -1, 1)));
     controls.update(); // orbit mode only — while walking it would overwrite our view angle
+  }
+  // under the surface: murky blue-green fog closes in; back to the normal haze when the head is out
+  const under = camera.position.y < POND.waterY && !!pond.depthAt(camera.position.x, camera.position.z);
+  if (under !== wasUnder) {
+    wasUnder = under;
+    scene.fog.color.set(under ? (isNight ? 0x08262c : 0x2f747b) : (isNight ? 0x1a2440 : 0xcfe6f7));
+    scene.fog.near = under ? 0.3 : 30; scene.fog.far = under ? 9 : 90;
+    pond.setUnder(under);
   }
   // debug view-direction readout (compass + axes)
   if (dbgChk.checked) {
