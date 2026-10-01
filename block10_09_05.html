@@ -3238,7 +3238,9 @@ function makeDockCloth(block10, block05) {
   // U-shaped section (−z foot → up → over the rounded top → down → +z foot) in 5 parts, with the SAME u breakpoints
   // at both ends so the corners loft into each other. sect() → [z, y, nz, ny] (n = the section's outward normal).
   const tipY = B.roofY(B.XT);
-  const secA = { Z: A.zr + 0.03, H: A.y, r: 0.12 };                       // flat on Block 10's leaning wall
+  // flat on Block 10's leaning wall; sides 6 cm past the roll ends so they cover the cut end of Block 10's snow skirt
+  // (at +3 cm a small notch showed at the ground between the cloth and the skirt, per user)
+  const secA = { Z: A.zr + 0.06, H: A.y, r: 0.12 };
   const parts = s => [s.H - s.r, Math.PI * s.r / 2, 2 * (s.Z - s.r), Math.PI * s.r / 2, s.H - s.r];
   const LA = parts(secA), TOT = LA.reduce((a, b) => a + b), BRK = [0];
   LA.forEach(l => BRK.push(BRK[BRK.length - 1] + l / TOT));
@@ -3252,7 +3254,8 @@ function makeDockCloth(block10, block05) {
     const a = i === 1 ? Math.PI - t * Math.PI / 2 : Math.PI / 2 - t * Math.PI / 2;
     return [(i === 1 ? -cZ : cZ) + s.r * Math.cos(a), cY + s.r * Math.sin(a), Math.cos(a), Math.sin(a)];
   };
-  const endA = (u, out = 0.004) => { const [z, y] = sect(secA, u);
+  const endA = (u, out = 0.004, grow = 0) => {
+    const [z, y] = sect(grow ? { Z: secA.Z + grow, H: secA.H + grow, r: secA.r + grow } : secA, u);
     return block10.localToWorld(new THREE.Vector3(A.hw - y * A.LEAN + out, y, z)); };
   // Block 05 end, `back` m behind its porch edge (canopy tip / leaning wing edges), `off` m proud of its surface:
   // sides on the wing faces, top on the sloped roof, corners round the roof's RAKE_R curl
@@ -3263,16 +3266,18 @@ function makeDockCloth(block10, block05) {
   };
   // rows: Block 10 velcro line → straight span → just over the canopy tip hem → LAPPED 5 cm onto Block 05's roof and wing
   // faces. (Ending at the tip left a few-mm slit between the cloth edge and the roof that showed the sky, per user.)
-  const LAP = 0.05, NU = 160, NV = 4, ROWS = NV + 2;
+  // ...and at Block 10 the cloth LAPS 3.5 cm onto the wall, 1.5 mm off it (it used to stand 4 mm off the wall with
+  // a raw edge: looking along the wall you could see through that slit — per user)
+  const LAP = 0.05, LAP_A = 0.035, A_OFF = 0.0015, NU = 160, NV = 4, ROWS = NV + 3;
   const y0 = endA(0).y;                                       // ground level of the tents (index.html lifts them)
   const gap = endA(0.5).distanceTo(endB(0.5, 0.012, 0));
   const pos = [], uv = [], idx = [];
   for (let i = 0; i <= NU; i++) {
-    const u = i / NU, a = endA(u), b = endB(u, 0.012, 0), arc = u * TOT;
-    const row = [...Array.from({ length: NV + 1 }, (_, j) => a.clone().lerp(b, j / NV)), endB(u, 0.004, LAP)];
+    const u = i / NU, a = endA(u, A_OFF), b = endB(u, 0.012, 0), arc = u * TOT;
+    const row = [endA(u, A_OFF, LAP_A), ...Array.from({ length: NV + 1 }, (_, j) => a.clone().lerp(b, j / NV)), endB(u, 0.004, LAP)];
     row.forEach((p, j) => {
       pos.push(p.x, Math.max(p.y, y0), p.z);
-      uv.push(arc, j <= NV ? j / NV * gap : gap + LAP);
+      uv.push(arc, j === 0 ? -LAP_A : j <= NV + 1 ? (j - 1) / NV * gap : gap + LAP);
     });
   }
   for (let i = 0; i < NU; i++) for (let j = 0; j < ROWS - 1; j++) {
@@ -3285,7 +3290,7 @@ function makeDockCloth(block10, block05) {
   geo.setIndex(idx);
   geo.computeVertexNormals();
   // faces must point OUTWARD (as onWall): an inward face self-shadows through the shadow normalBias
-  const mid = (NU / 2) * ROWS + NV / 2;
+  const mid = (NU / 2) * ROWS + 1 + NV / 2;
   if (geo.attributes.normal.getY(mid) < 0) {
     for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
     geo.setIndex(idx);
@@ -3298,7 +3303,7 @@ function makeDockCloth(block10, block05) {
   // no zip lines (per user): the cloth is VELCROED onto Block 10, so its edges show no trim. Hems along the ground.
   const line = (f, n = 90) => Array.from({ length: n + 1 }, (_, i) => f(i / n));
   for (const i of [0, NU]) {
-    const hem = line(v => { const k = (i * ROWS + Math.round(v * NV)) * 3; return new THREE.Vector3(pos[k], y0 + 0.008, pos[k + 2]); }, NV);
+    const hem = line(v => { const k = (i * ROWS + 1 + Math.round(v * NV)) * 3; return new THREE.Vector3(pos[k], y0 + 0.008, pos[k + 2]); }, NV);
     const t = new THREE.Mesh(makeTube(hem, 0.008, 0, 10, 0.02), matCanvas);
     t.castShadow = true;
     grp.add(t);
