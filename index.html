@@ -678,10 +678,23 @@ const TILE_M = 2; // one texture tile = 2 m of ground (pebbles ≈ 3–8 cm)
 // grass everywhere (90 m diameter circle, UVs 0..1 span 90 m → repeat 90/TILE_M gives the 2 m tile)
 const grassTex = makeGrassTexture();
 grassTex.repeat.set(90 / TILE_M, 90 / TILE_M);
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(45, 64),
-  new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 })
-);
+// pond (per user) in the open grass left of the site: an organic blob outline (world x/z, ≈ 9 × 7 m). The grass gets a
+// HOLE there so the basin below can be seen through the clear water (see the pond section further down).
+const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 0.75 };
+const pondR = a => POND.R * (1 + 0.11 * Math.sin(2 * a + 1.0) + 0.07 * Math.sin(3 * a + 2.2) + 0.04 * Math.sin(5 * a + 0.4));
+const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
+  const a = i / n * Math.PI * 2, r = pondR(a) * k;
+  return [POND.x + Math.cos(a) * r * POND.sx, POND.z + Math.sin(a) * r];
+});
+const groundShape = new THREE.Shape();
+groundShape.absarc(0, 0, 45, 0, Math.PI * 2, false);
+groundShape.holes.push(new THREE.Path(pondOutline().map(([x, z]) => new THREE.Vector2(x, -z)))); // shape y = −world z
+const groundGeo = new THREE.ShapeGeometry(groundShape, 64);
+{ // UVs as the old CircleGeometry had them (0..1 across the 90 m disc), so the grass tile stays 2 m
+  const uv = groundGeo.attributes.uv, pp = groundGeo.attributes.position;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, pp.getX(i) / 90 + 0.5, pp.getY(i) / 90 + 0.5);
+}
+const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
@@ -4286,7 +4299,8 @@ const leafTex = makeLeafTexture();     leafTex.repeat.set(4, 3);   // broadleaf 
 
 // ---------- shared tree placement: canopy-radius-aware rejection so no trees overlap
 // (conifers and broadleafs share the same spot list, so they can't collide either) ----------
-const treeSpots = [[-9.5, 6.5, 2.28], [9.5, -6.5, 2.28]]; // anchor trees near site corners (string lights), r = 1.9 × 1.2
+const treeSpots = [[-9.5, 6.5, 2.28], [9.5, -6.5, 2.28], // anchor trees near site corners (string lights), r = 1.9 × 1.2
+  [POND.x, POND.z, POND.R * POND.sx * 1.25 + 1.5]];          // keep the pond and its banks clear of trees
 function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
   const out = [];
   let guard = 0;
@@ -4355,6 +4369,221 @@ function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
   trunkIM.castShadow = canopyIM.castShadow = true;
   scene.add(trunkIM, canopyIM);
 }
+
+// ---------- pond with koi (per user): basin under a hole in the grass, clear rippling water reflecting the sky,
+// rocks + reeds/cattails round the bank, lily pads, and koi swimming lazy loops below the surface ----------
+const pond = (() => {
+  const P = POND, Y = P.waterY;
+  const local = (k, a) => [Math.cos(a) * pondR(a) * k * P.sx, Math.sin(a) * pondR(a) * k]; // offset from the centre
+  const g = new THREE.Group();
+  g.position.set(P.x, 0, P.z);
+  scene.add(g);
+
+  // basin: rings from just under the grass edge down to the bottom (deepest in the middle); sandy at the rim,
+  // dark silt in the depths (vertex colours)
+  {
+    const N = 120, K = 14, pos = [], col = [], idx = [];
+    const rim = new THREE.Color(0x8a7a58), deep = new THREE.Color(0x26302a), c = new THREE.Color();
+    for (let k = 0; k <= K; k++) {
+      const s = k / K, scale = k === 0 ? 1.02 : 1 - 0.95 * s, y = k === 0 ? -0.004 : -P.depth * (1 - (1 - s) ** 2);
+      c.copy(rim).lerp(deep, Math.min(1, s * 1.6));
+      for (let i = 0; i < N; i++) {
+        const [x, z] = local(scale, i / N * Math.PI * 2);
+        pos.push(x, y, z); col.push(c.r, c.g, c.b);
+      }
+    }
+    for (let k = 0; k < K; k++) for (let i = 0; i < N; i++) {
+      const a = k * N + i, b = k * N + (i + 1) % N, a2 = a + N, b2 = b + N;
+      idx.push(a, a2, b, b, a2, b2);
+    }
+    // close the bottom: fan from the last ring to a centre point (left open, the sky showed through a hole mid-pond)
+    const ci = pos.length / 3;
+    pos.push(0, -P.depth, 0); col.push(deep.r, deep.g, deep.b);
+    for (let i = 0; i < N; i++) idx.push(K * N + i, ci, K * N + (i + 1) % N);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const basin = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide }));
+    basin.receiveShadow = true;
+    g.add(basin);
+  }
+
+  // water: a slightly inset copy of the outline just below the grass. Clear tinted surface, a tileable ripple normal
+  // map that drifts, and a sky environment map (day / night) so it reflects the sky at low angles
+  const rippleTex = (() => {
+    const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+    const ctx = c.getContext('2d'), img = ctx.createImageData(S, S);
+    const waves = Array.from({ length: 7 }, () => [1 + (Math.random() * 6 | 0), 1 + (Math.random() * 6 | 0), Math.random() * 6, 0.5 + Math.random()]);
+    const h = (x, y) => waves.reduce((t, [fx, fy, ph, a]) => t + a * Math.sin(2 * Math.PI * (fx * x + fy * y) / S + ph), 0);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const dx = h(x + 1, y) - h(x - 1, y), dy = h(x, y + 1) - h(x, y - 1), l = Math.hypot(dx, dy, 6);
+      const o = (y * S + x) * 4;
+      img.data[o] = 128 + 127 * (-dx / l); img.data[o + 1] = 128 + 127 * (-dy / l); img.data[o + 2] = 128 + 127 * (6 / l); img.data[o + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(0.45, 0.45);                       // ShapeGeometry UVs are metres → one ripple tile ≈ 2.2 m
+    return t;
+  })();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const skyEnv = tex => {
+    const sc = new THREE.Scene();
+    sc.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })));
+    return pmrem.fromScene(sc, 0.02).texture;
+  };
+  const envDay = skyEnv(skyDayTex), envNight = skyEnv(skyNightTex);
+  pmrem.dispose();
+  const waterMat = new THREE.MeshStandardMaterial({ color: 0x2c5d66, roughness: 0.05, metalness: 0.0, transparent: true,
+    opacity: 0.62, envMap: envDay, envMapIntensity: 1.4, normalMap: rippleTex, normalScale: new THREE.Vector2(0.3, 0.3) });
+  // Fresnel: looking straight down you see the koi; at shallow angles the surface turns reflective and hides them
+  waterMat.onBeforeCompile = sh => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+      float fres = pow(1.0 - clamp(dot(geometryNormal, geometryViewDir), 0.0, 1.0), 3.0);
+      gl_FragColor.a = mix(gl_FragColor.a, 0.97, fres);`);
+  };
+  const waterShape = new THREE.Shape(Array.from({ length: 120 }, (_, i) => { const [x, z] = local(0.995, i / 120 * Math.PI * 2); return new THREE.Vector2(x, -z); }));
+  const water = new THREE.Mesh(new THREE.ShapeGeometry(waterShape, 4), waterMat);
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = Y;
+  water.receiveShadow = true;
+  water.renderOrder = 2;                            // after the fish + basin it tints
+  g.add(water);
+
+  // rocks round the bank (instanced, partly sunk), leaving gaps where the reed clumps stand
+  const reedAngles = [0.6, 2.4, 4.3];
+  {
+    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+    const n = 34, rocks = new THREE.InstancedMesh(rockGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true }), n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+    let k = 0;
+    for (let i = 0; i < 80 && k < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      if (reedAngles.some(r => Math.abs(Math.atan2(Math.sin(a - r), Math.cos(a - r))) < 0.28)) continue;
+      const sc = 0.12 + Math.random() * 0.26, [x, z] = local(1.0 + Math.random() * 0.06, a);
+      p.set(x, sc * 0.25, z); s.set(sc * (1 + Math.random() * 0.5), sc * (0.6 + Math.random() * 0.3), sc);
+      q.setFromEuler(new THREE.Euler(Math.random(), Math.random() * 6, Math.random()));
+      rocks.setMatrixAt(k, m4.compose(p, q, s));
+      rocks.setColorAt(k++, col.setHSL(0.08 + Math.random() * 0.05, 0.08, 0.38 + Math.random() * 0.2));
+    }
+    rocks.count = k;
+    rocks.castShadow = rocks.receiveShadow = true;
+    g.add(rocks);
+  }
+
+  // reed + cattail clumps (instanced stems, brown cattail heads on some)
+  {
+    const stemGeo = new THREE.CylinderGeometry(0.004, 0.009, 1, 5); stemGeo.translate(0, 0.5, 0);
+    const headGeo = new THREE.CapsuleGeometry(0.017, 0.11, 3, 8);
+    const N = reedAngles.length * 16;
+    const stems = new THREE.InstancedMesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }), N);
+    const heads = new THREE.InstancedMesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 }), N);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3();
+    let k = 0, kh = 0;
+    for (const ra of reedAngles) for (let j = 0; j < 16; j++) {
+      const a = ra + (Math.random() - 0.5) * 0.4, [x, z] = local(0.93 + Math.random() * 0.12, a);
+      const h = 0.7 + Math.random() * 0.75, lean = new THREE.Euler((Math.random() - 0.5) * 0.25, 0, (Math.random() - 0.5) * 0.25);
+      q.setFromEuler(lean); p.set(x, Y - 0.05, z); s.set(1, h, 1);
+      stems.setMatrixAt(k, m4.compose(p, q, s));
+      stems.setColorAt(k++, col.setHSL(0.22 + Math.random() * 0.06, 0.45, 0.3 + Math.random() * 0.12));
+      if (Math.random() < 0.35) {                     // cattail head 85 % up the stem
+        up.set(0, h * 0.85, 0).applyQuaternion(q).add(p);
+        heads.setMatrixAt(kh++, m4.compose(up, q, s.set(1, 1, 1)));
+      }
+    }
+    heads.count = kh;
+    stems.castShadow = heads.castShadow = true;
+    g.add(stems, heads);
+  }
+
+  // lily pads (notched discs on the surface) with two water-lily flowers
+  {
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x3f7a3a, roughness: 0.6, side: THREE.DoubleSide });
+    const petalMat = new THREE.MeshStandardMaterial({ color: 0xf3c6d6, roughness: 0.6 });
+    const heartMat = new THREE.MeshStandardMaterial({ color: 0xf2c94c, roughness: 0.6 });
+    for (let i = 0; i < 11; i++) {
+      const a = Math.random() * Math.PI * 2, [x, z] = local(0.45 + Math.random() * 0.4, a), r = 0.12 + Math.random() * 0.1;
+      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 20, 0.25, Math.PI * 2 - 0.5), padMat);
+      pad.rotation.set(-Math.PI / 2, 0, Math.random() * 6);
+      pad.position.set(x, Y + 0.004, z);
+      pad.receiveShadow = true;
+      g.add(pad);
+      if (i < 2) {
+        const fl = new THREE.Group();
+        for (let k = 0; k < 8; k++) {
+          const petal = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), petalMat);
+          petal.scale.set(0.016, 0.01, 0.045);
+          const pa = k / 8 * Math.PI * 2;
+          petal.position.set(Math.sin(pa) * 0.03, 0.02, Math.cos(pa) * 0.03);
+          petal.rotation.set(-0.5, pa, 0, 'YXZ');
+          fl.add(petal);
+        }
+        const heart = new THREE.Mesh(new THREE.SphereGeometry(0.014, 10, 8), heartMat);
+        heart.position.y = 0.025; fl.add(heart);
+        fl.position.set(x, Y + 0.004, z);
+        g.add(fl);
+      }
+    }
+  }
+
+  // koi: ellipsoid body with a patterned skin, fanned tail + pectoral fins (horizontal, so they read from above),
+  // each swimming its own lazy loop at its own depth; the tail wags with the stroke
+  const koiTex = (base, patch, spots) => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = base; ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = patch;
+    for (let i = 0; i < spots; i++) {
+      ctx.beginPath();
+      ctx.ellipse(Math.random() * 256, 20 + Math.random() * 60, 18 + Math.random() * 30, 10 + Math.random() * 18, Math.random() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  };
+  const koiTypes = [['#f4f1ea', '#e0461c', 5], ['#e8681e', '#f6efe4', 3], ['#f2b632', '#f7e2a0', 2], ['#1d1d1f', '#e2571e', 4], ['#f4f1ea', '#1d1d1f', 4], ['#e0461c', '#e0461c', 0]];
+  const finMat = new THREE.MeshStandardMaterial({ color: 0xf6e7d8, roughness: 0.5, transparent: true, opacity: 0.75, side: THREE.DoubleSide });
+  const tailShape = new THREE.Shape();
+  tailShape.moveTo(0, 0);
+  tailShape.quadraticCurveTo(-0.06, 0.05, -0.075, 0.12);
+  tailShape.quadraticCurveTo(-0.02, 0.08, 0, 0.085);
+  tailShape.quadraticCurveTo(0.02, 0.08, 0.075, 0.12);
+  tailShape.quadraticCurveTo(0.06, 0.05, 0, 0);
+  const tailGeo = new THREE.ShapeGeometry(tailShape, 6); tailGeo.rotateX(-Math.PI / 2); // shape +y → backwards (−z)
+  const finGeo = new THREE.CircleGeometry(0.035, 10); finGeo.scale(1, 0.55, 1); finGeo.rotateX(-Math.PI / 2);
+  const bodyGeo = new THREE.SphereGeometry(1, 20, 12);
+  const fish = koiTypes.concat(koiTypes.slice(0, 2)).map(([b, pch, n], i) => {
+    const f = new THREE.Group(), L = 0.85 + Math.random() * 0.35;
+    const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ map: koiTex(b, pch, n), roughness: 0.35 }));
+    body.scale.set(0.05, 0.042, 0.18); f.add(body);
+    const tail = new THREE.Mesh(tailGeo, finMat); tail.position.z = -0.165; f.add(tail);
+    for (const sx of [-1, 1]) {
+      const fin = new THREE.Mesh(finGeo, finMat);
+      fin.position.set(sx * 0.055, -0.01, 0.06); fin.rotation.y = sx * 0.6; f.add(fin);
+    }
+    f.scale.setScalar(L);
+    g.add(f);
+    return { f, tail, cx: (Math.random() - 0.5) * 1.2, cz: (Math.random() - 0.5) * 0.9, a: 0.9 + Math.random() * 1.2,
+      b: 0.6 + Math.random() * 0.9, w: (0.12 + Math.random() * 0.12) * (i % 2 ? 1 : -1), ph: Math.random() * 6,
+      y: Y - 0.12 - Math.random() * 0.14 };
+  });
+
+  return {
+    update(t, dt) {
+      rippleTex.offset.x += dt * 0.012; rippleTex.offset.y += dt * 0.007;
+      for (const k of fish) {
+        const wob = 1 + 0.15 * Math.sin(t * 0.3 + k.ph), ang = k.w * t + k.ph;
+        const x = k.cx + k.a * wob * Math.cos(ang), z = k.cz + k.b * wob * Math.sin(ang);
+        const vx = -k.a * wob * Math.sin(ang) * k.w, vz = k.b * wob * Math.cos(ang) * k.w;
+        k.f.position.set(x, k.y + 0.02 * Math.sin(t * 0.7 + k.ph), z);
+        k.f.rotation.y = Math.atan2(vx, vz) + 0.08 * Math.sin(t * 8 + k.ph);  // body sways against the tail
+        k.tail.rotation.y = 0.45 * Math.sin(t * 8 + k.ph + 1.2);
+      }
+    },
+    setNight(on) { waterMat.envMap = on ? envNight : envDay; waterMat.color.set(on ? 0x14303a : 0x2c5d66); },
+  };
+})();
 
 await stage('Setting up camp furniture…', 75);
 // ---------- fire pit (front centre of the gravel area) ----------
@@ -4866,6 +5095,7 @@ function setNight(on) {
   bulbMat.emissiveIntensity = on ? 2.4 : 0; // string bulbs glow
   for (const l of tableLamps) { l.glow.emissiveIntensity = on ? 1.8 : 0; l.light.intensity = on ? 0.9 : 0; } // both table lanterns
   stringLight.intensity = on ? 1.6 : 0;
+  pond.setNight(on);                          // water reflects the night sky
   fireLight.intensity = on ? 2.6 : 1.2;
   // tent lanterns brighten at night; the mesh screens pick up a warm glow from inside
   for (const t of [tentL, tentR, block05, u3b10, u3b09, u3b05, solo05]) {
@@ -5084,6 +5314,7 @@ renderer.setAnimationLoop(() => {
   flameOuter.scale.set(1, f, 1);
   flameInner.scale.set(1, f * 1.05, 1);
   fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15);
+  pond.update(t, dt);                         // koi swim, ripples drift
   // slow cloud drift
   for (const c of clouds) { c.position.x += 0.004; if (c.position.x > 160) c.position.x = -160; }
   skyGroup.position.copy(camera.position); // keep the sky centred on the viewer (never clipped by camera.far)

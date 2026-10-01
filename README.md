@@ -12,7 +12,7 @@ An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, 
   - 2× Block 10 under a 7 × 6 m flysheet, with Block 05 docked on one of them
   - a Block 10 + 09 + 05 unit and a free-standing Block 05 facing the campfire
   - egg-roll tables, folding chairs, lanterns, cooler, kitchen crate, entrance rugs
-  - festoon lights on poles round the campfire, trees
+  - festoon lights on poles round the campfire, trees, and a koi pond with lily pads and reeds
 - Detailed tent models, each with:
   - leaning walls, rounded edges and see-through mesh windows
   - roll-up flaps, an inflatable air frame with fabric sleeves and a camping lantern
