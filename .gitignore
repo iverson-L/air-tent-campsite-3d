@@ -2,6 +2,8 @@
 *.jpg
 *.png
 *.webp
+# …except our own link-preview / README image
+!preview.jpg
 # browser-automation scratch output
 .playwright-mcp/
 *.b64
