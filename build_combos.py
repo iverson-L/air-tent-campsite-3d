@@ -9,8 +9,9 @@ so the files' identically named constants/helpers don't clash. Re-run after edit
 
 Layout (per block10+05.png and the YAMATO 9+10+5 photo):
   Block 10  at the origin, gable entrance facing +z.
-  Block 05  docked on Block 10's +x side wall, turned to face it (its door wall against the wall, its leaning
-            porch "wing" edges lying along Block 10's 11° leaning wall), centred along Block 10's length.
+  Block 05  on Block 10's +x side, turned to face it, centred along Block 10's length, standing 15 cm off the wall
+            (slider) and joined by the expandable, velcroed connection cloth (makeDockCloth) over Block 10's
+            opened side window. index.html uses the same 15 cm cloth (fixed, no slider).
   Block 09  end-to-end behind Block 10 (−z): same 360 × 245 profile, ridges in line, its entrance gable against
             Block 10's back gable.
 """
@@ -43,6 +44,28 @@ OPEN_BACK_GABLE = """    if (s === -1 && OPTS.openBack) {
       cap.position.z = -(hd - FACING_D); // outer face exactly on the rim plane
       cap.castShadow = cap.receiveShadow = true;
       g.add(cap);
+      continue;
+    }
+"""
+
+
+DOCK_OPEN_SIDE = """    if (s === 1 && OPTS.dockOpen) {
+      // GENERATED (OPTS.dockOpen): the +x side opens into Block 05's connection cloth (per block10+05.png) — the
+      // mesh and storm flap are unzipped and rolled up TOGETHER into one thick roll just under the eave (2 straps,
+      // per user max 2 ties). The cloth's top edge is velcroed onto the wall right beneath the roll (userData.dock).
+      const rollR = 0.055, rollY = WALL_Y1 - 0.01, rollX = hw - rollY * LEAN + rollR + 0.003, zr = WIN_HZ + 0.08;
+      const roll = new THREE.Mesh(makeTube([new THREE.Vector3(rollX, rollY, -zr), new THREE.Vector3(rollX, rollY, zr)],
+        rollR, 0.16, 24, 0.12), matCanvas);
+      roll.castShadow = roll.receiveShadow = true;
+      g.add(roll);
+      for (const zs of [-1, 1]) {
+        const STRAP_GAP = 1.6; // ring open where the roll rests on the zero-thickness wall
+        const strap = new THREE.Mesh(new THREE.TorusGeometry(rollR * 1.14, 0.005, 6, 28, Math.PI * 2 - STRAP_GAP), matTrim);
+        strap.rotation.z = Math.PI + LEAN_RAD + STRAP_GAP / 2;
+        strap.position.set(rollX, rollY, zs * zr * 0.6);
+        g.add(strap);
+      }
+      g.userData.dock = { hw, LEAN, y: rollY - rollR - 0.012, zr };
       continue;
     }
 """
@@ -82,7 +105,9 @@ def gable_tent(path):
       o.docked    — Block 05 docks on the +x side wall: no storm flap / snow skirt there
       o.bed       — false removes the air bed (that Block 10 gets the sofa)
       o.openBack  — back gable is an open doorway frame (no mesh/zip/rolls), skirt cut across the joint
-      o.openFront — entrance keeps only its frame panel (faces another tent), skirt cut across the joint"""
+      o.openFront — entrance keeps only its frame panel (faces another tent), skirt cut across the joint
+      o.dockOpen  — the +x side window is opened into a connection cloth: mesh + storm flap rolled up together
+                    under the eave; exposes userData.dock (where the cloth velcros on) for makeDockCloth"""
     code = section(path, "// ---------- Block", "// (interior light now lives")
     code = add_cut_helper(code, path)
     code = expose_lantern(code, path)
@@ -95,6 +120,8 @@ def gable_tent(path):
                 "      (OPTS.openBack && cz < -(hd - 0.12) && Math.abs(cx) < 1.62) ||  // gable joint behind\n"
                 "      (OPTS.openFront && cz > hd - 0.12 && Math.abs(cx) < 1.62));     // gable joint in front\n"
                 "    g.add(skirt);\n", path)
+    code = edit(code, "    // fine see-through screen (same as the gable door): overlaps the hole edge by 1 cm and sits\n",
+                DOCK_OPEN_SIDE + "    // fine see-through screen (same as the gable door): overlaps the hole edge by 1 cm and sits\n", path)
     code = edit(code, "    if (s === -1) {\n", OPEN_BACK_GABLE + "    if (s === -1) {\n", path)
     code = edit(code, "    g.add(panel);\n",
                 "    g.add(panel);\n"
@@ -104,7 +131,7 @@ def gable_tent(path):
     code = code[:i] + "  if (OPTS.bed !== false) { // GENERATED: o.bed === false → no bed (that Block 10 has the sofa)\n" + code[i:j] + "  }\n\n" + code[j:]
     # builder; the shared helpers are exposed so layouts can build joint pieces with the tent's own profile/fabric
     return code + ("\nreturn (o = {}) => {\n  OPTS = o;\n  const tent = buildTent(0, -1);\n"
-                   "  Object.assign(tent.userData, { archPts, makeTube, matCanvas, matTrim, matGableMesh });\n  return tent;\n};\n")
+                   "  Object.assign(tent.userData, { archPts, makeTube, matCanvas, matTrim, matGableMesh, matTentFloor });\n  return tent;\n};\n")
 
 
 def block05():
@@ -117,7 +144,9 @@ def block05():
     # canopy 5 cm deeper so the porch wing edge reaches Block 10's leaning wall at the top (no light slit)
     code = edit(code, "const VISOR = 0.25;", "const VISOR = 0.30; // docked: reaches Block 10's leaning wall (no slit at the joint)", "block05")
     # builder: o.docked — docked on a Block 10 side wall (no snow skirt along its door wall)
-    return code + "\nreturn (o = {}) => { OPTS = o; const b = buildBlock05(); b.userData.matGableMesh = matGableMesh; return b; };\n"
+    # (userData.dock: its porch geometry, for makeDockCloth)
+    return code + ("\nreturn (o = {}) => { OPTS = o; const b = buildBlock05(); b.userData.matGableMesh = matGableMesh;\n"
+                   "  b.userData.dock = { XF, XT, hd, RAKE_R, roofY }; return b; };\n")
 
 
 def sofa():
@@ -141,6 +170,10 @@ HEAD = """<!DOCTYPE html>
   #app {{ width: 100%; height: 100%; }}
   #hint {{ position: absolute; top: 12px; left: 12px; z-index: 10; background: rgba(255,255,255,.85);
     border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #444; box-shadow: 0 2px 10px rgba(0,0,0,.15); }}
+  #gapUI {{ position: absolute; top: 52px; left: 12px; z-index: 10; display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.85); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: #444;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15); }}
+  #gapUI b {{ min-width: 3.2em; }}
 </style>
 <script type="importmap">
 {{
@@ -215,6 +248,7 @@ function contactShadow(cx, cz, w, d) {
   m.rotation.x = -Math.PI / 2;
   m.position.set(cx, 0.001, cz);
   scene.add(m);
+  return m;
 }
 
 {layout}
@@ -240,19 +274,10 @@ renderer.setAnimationLoop(() => {
 </html>
 """
 
-# Block 05 placement: turned 180° so its door wall (local +x, XF = 0.95) faces −x; its door-wall foot sits 1 cm
-# outside Block 10's +x wall base (x = 1.80).
 LAYOUT_10 = """
 // Block 10 at the origin (entrance +z)
 scene.add(block10);
 contactShadow(0, 0, 3.6, 2.8);
-"""
-LAYOUT_05 = """
-// Block 05 docked on Block 10's +x side wall, facing it, centred along Block 10's length
-block05.rotation.y = Math.PI;
-block05.position.set(1.80 + 0.01 + 0.95, 0, 0);
-scene.add(block05);
-contactShadow(1.81 + 0.95, 0, 2.15, 2.4);
 """
 LAYOUT_SOFA = """
 // sofa (sofa_mock.html) in Block 10, back against the closed back gable, facing the entrance
@@ -330,6 +355,123 @@ scene.add(block09);
 contactShadow(0, -2.66, 3.6, 2.5);
 """
 
+DOCK_CLOTH_FN = """
+// EXPANDABLE connection cloth between Block 10's opened +x side and a docked Block 05 (per block10+05.png): a slack
+// fabric tunnel. Its top is velcroed onto Block 10's wall right under the rolled-up side (block10.userData.dock) and slopes
+// down onto Block 05's canopy tip; its sides drop to the ground along Block 05's leaning porch-wing edges. Built
+// from both tents' CURRENT placement, so it stretches to whatever gap Block 05 stands at. Taut and smooth — a straight
+// slope with no wrinkles or sag (per user). A PVC ground sheet joins the two floors.
+function makeDockCloth(block10, block05) {
+  const grp = new THREE.Group();
+  const { makeTube, matCanvas, matTentFloor } = block10.userData;
+  const A = block10.userData.dock, B = block05.userData.dock;
+  block10.updateMatrixWorld(true); block05.updateMatrixWorld(true);
+  const zAxis = g => new THREE.Vector3(0, 0, 1).transformDirection(g.matrixWorld);
+  const zW = zAxis(block10), flip = zAxis(block05).dot(zW) < 0 ? -1 : 1; // Block 05 turned π → its z runs backwards
+  // U-shaped section (−z foot → up → over the rounded top → down → +z foot) in 5 parts, with the SAME u breakpoints
+  // at both ends so the corners loft into each other. sect() → [z, y, nz, ny] (n = the section's outward normal).
+  const tipY = B.roofY(B.XT);
+  const secA = { Z: A.zr + 0.03, H: A.y, r: 0.12 };                       // flat on Block 10's leaning wall
+  const parts = s => [s.H - s.r, Math.PI * s.r / 2, 2 * (s.Z - s.r), Math.PI * s.r / 2, s.H - s.r];
+  const LA = parts(secA), TOT = LA.reduce((a, b) => a + b), BRK = [0];
+  LA.forEach(l => BRK.push(BRK[BRK.length - 1] + l / TOT));
+  const sect = (s, u) => {
+    let i = 0;
+    while (i < 4 && u > BRK[i + 1]) i++;
+    const t = (u - BRK[i]) / (BRK[i + 1] - BRK[i]), cY = s.H - s.r, cZ = s.Z - s.r;
+    if (i === 0) return [-s.Z, t * cY, -1, 0];
+    if (i === 4) return [s.Z, (1 - t) * cY, 1, 0];
+    if (i === 2) return [-cZ + 2 * cZ * t, s.H, 0, 1];
+    const a = i === 1 ? Math.PI - t * Math.PI / 2 : Math.PI / 2 - t * Math.PI / 2;
+    return [(i === 1 ? -cZ : cZ) + s.r * Math.cos(a), cY + s.r * Math.sin(a), Math.cos(a), Math.sin(a)];
+  };
+  const endA = (u, out = 0.004) => { const [z, y] = sect(secA, u);
+    return block10.localToWorld(new THREE.Vector3(A.hw - y * A.LEAN + out, y, z)); };
+  // Block 05 end, `back` m behind its porch edge (canopy tip / leaning wing edges), `off` m proud of its surface:
+  // sides on the wing faces, top on the sloped roof, corners round the roof's RAKE_R curl
+  const endB = (u, off, back) => {
+    const sec = { Z: B.hd + off, H: B.roofY(B.XT - back) + off, r: B.RAKE_R + off };
+    const [z, y] = sect(sec, u), k = Math.min(y / tipY, 1);
+    return block05.localToWorld(new THREE.Vector3(B.XF + (B.XT - B.XF) * k - back, y, flip * z));
+  };
+  // rows: Block 10 velcro line → straight span → just over the canopy tip hem → LAPPED 5 cm onto Block 05's roof and wing
+  // faces. (Ending at the tip left a few-mm slit between the cloth edge and the roof that showed the sky, per user.)
+  const LAP = 0.05, NU = 160, NV = 4, ROWS = NV + 2;
+  const y0 = endA(0).y;                                       // ground level of the tents (index.html lifts them)
+  const gap = endA(0.5).distanceTo(endB(0.5, 0.012, 0));
+  const pos = [], uv = [], idx = [];
+  for (let i = 0; i <= NU; i++) {
+    const u = i / NU, a = endA(u), b = endB(u, 0.012, 0), arc = u * TOT;
+    const row = [...Array.from({ length: NV + 1 }, (_, j) => a.clone().lerp(b, j / NV)), endB(u, 0.004, LAP)];
+    row.forEach((p, j) => {
+      pos.push(p.x, Math.max(p.y, y0), p.z);
+      uv.push(arc, j <= NV ? j / NV * gap : gap + LAP);
+    });
+  }
+  for (let i = 0; i < NU; i++) for (let j = 0; j < ROWS - 1; j++) {
+    const a = i * ROWS + j, b = a + ROWS;
+    idx.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // faces must point OUTWARD (as onWall): an inward face self-shadows through the shadow normalBias
+  const mid = (NU / 2) * ROWS + NV / 2;
+  if (geo.attributes.normal.getY(mid) < 0) {
+    for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+  }
+  const cloth = new THREE.Mesh(geo, matCanvas);
+  cloth.castShadow = cloth.receiveShadow = true;
+  grp.add(cloth);
+
+  // no zip lines (per user): the cloth is VELCROED onto Block 10, so its edges show no trim. Hems along the ground.
+  const line = (f, n = 90) => Array.from({ length: n + 1 }, (_, i) => f(i / n));
+  for (const i of [0, NU]) {
+    const hem = line(v => { const k = (i * ROWS + Math.round(v * NV)) * 3; return new THREE.Vector3(pos[k], y0 + 0.008, pos[k + 2]); }, NV);
+    const t = new THREE.Mesh(makeTube(hem, 0.008, 0, 10, 0.02), matCanvas);
+    t.castShadow = true;
+    grp.add(t);
+  }
+  // ground sheet joining the two bathtub floors
+  const fl = [endA(0), endA(1), endB(1, 0, 0), endB(0, 0, 0)].map(p => new THREE.Vector3(p.x, y0 + 0.003, p.z));
+  const fg = new THREE.BufferGeometry().setFromPoints([fl[0], fl[2], fl[1], fl[0], fl[3], fl[2]]);
+  fg.computeVertexNormals();
+  const floor = new THREE.Mesh(fg, matTentFloor);
+  floor.receiveShadow = true;
+  grp.add(floor);
+  return grp;
+}
+"""
+# block10_05.html + block10_09_05.html: Block 05 stands off Block 10's opened side and the connection cloth spans the gap; the slider
+# stretches it (Block 05 slides out, the cloth is rebuilt to fit)
+LAYOUT_05_CLOTH = DOCK_CLOTH_FN + """
+// Block 05 on Block 10's +x side, facing it, centred along its length, joined by the expandable connection cloth
+block05.rotation.y = Math.PI;
+scene.add(block05);
+const shadow05 = contactShadow(0, 0, 2.15, 2.4);
+let dockCloth = null;
+function setDockGap(gap) {                                   // Block 10 wall base → Block 05 door-wall foot
+  block05.position.set(1.80 + gap + 0.95, 0, 0);
+  shadow05.position.x = 1.80 + gap + 0.95;
+  if (dockCloth) { scene.remove(dockCloth); dockCloth.traverse(o => o.geometry && o.geometry.dispose()); }
+  dockCloth = makeDockCloth(block10, block05);
+  scene.add(dockCloth);
+}
+const gapUI = document.createElement('label');
+gapUI.id = 'gapUI';
+gapUI.innerHTML = 'Connection cloth <input type="range" min="10" max="60" step="1" value="15"><b>15 cm</b>';
+document.body.appendChild(gapUI);
+gapUI.querySelector('input').addEventListener('input', e => {
+  setDockGap(e.target.value / 100);
+  gapUI.querySelector('b').textContent = e.target.value + ' cm';
+});
+setDockGap(0.15); // 15 cm connection cloth (per user)
+"""
+
 
 def write(name, title, hint, sources, parts, layout, cam, target):
     html = HEAD.format(title=title, hint=hint, sources=", ".join(sources), cam=cam, target=target)
@@ -340,20 +482,21 @@ def write(name, title, hint, sources, parts, layout, cam, target):
 
 
 write("block10_05.html", "Block 10 + 05 Mock",
-      "Block 10 + Block 05 (docked on its side). Sofa in Block 10.",
+      "Block 10 + Block 05, joined by the expandable connection cloth (drag the slider). Sofa in Block 10.",
       ["block10_mock.html", "block05.html", "sofa_mock.html"],
       [("makeBlock10", gable_tent("block10_mock.html")), ("makeBlock05", block05()), ("makeSofa", sofa())],
-      "const block10 = makeBlock10({ docked: true, bed: false }), block05 = makeBlock05({ docked: true }), sofa = makeSofa();\n"
-      + LAYOUT_10 + LAYOUT_05 + LAYOUT_SOFA, "-3.4, 2.6, 6.6", "0.9, 0.9, 0")
+      "const block10 = makeBlock10({ docked: true, dockOpen: true, bed: false }), block05 = makeBlock05({ docked: true }),\n"
+      "  sofa = makeSofa();\n"
+      + LAYOUT_10 + LAYOUT_05_CLOTH + LAYOUT_SOFA, "-3.4, 2.6, 6.6", "0.9, 0.9, 0")
 
 write("block10_09_05.html", "Block 10 + 09 + 05 Mock",
-      "Block 10 (front) + Block 09 (behind, end-to-end) + Block 05 (docked on Block 10's side). Sofa in Block 10.",
+      "Block 10 (front) + Block 09 (behind, end-to-end) + Block 05, joined by the expandable connection cloth (drag the slider). Sofa in Block 10.",
       ["block10_mock.html", "block09_mock.html", "block05.html", "sofa_mock.html"],
       [("makeBlock10", gable_tent("block10_mock.html")), ("makeBlock09", gable_tent("block09_mock.html")),
        ("makeBlock05", block05()), ("makeSofa", sofa())],
-      "const block10 = makeBlock10({ docked: true, bed: false, openBack: true }), block09 = makeBlock09({ openFront: true }),\n"
-      "  block05 = makeBlock05({ docked: true }), sofa = makeSofa();\n"
-      + LAYOUT_10 + LAYOUT_09 + LAYOUT_JOINT_CLOTH + LAYOUT_05 + LAYOUT_SOFA_SIDE, "-4.2, 3.4, 7.2", "0.8, 0.9, -1.2")
+      "const block10 = makeBlock10({ docked: true, dockOpen: true, bed: false, openBack: true }),\n"
+      "  block09 = makeBlock09({ openFront: true }), block05 = makeBlock05({ docked: true }), sofa = makeSofa();\n"
+      + LAYOUT_10 + LAYOUT_09 + LAYOUT_JOINT_CLOTH + LAYOUT_05_CLOTH + LAYOUT_SOFA_SIDE, "-4.2, 3.4, 7.2", "0.8, 0.9, -1.2")
 
 
 # ---- index.html: inject the model builders between markers (the rest of index.html is hand-written) ----
@@ -365,7 +508,7 @@ gen = (MARK_A + " — written by build_combos.py from block10_mock.html, block09
        + "\n".join(closure(n, c) for n, c in [("makeBlock10", gable_tent("block10_mock.html")),
                                                ("makeBlock09", gable_tent("block09_mock.html")),
                                                ("makeBlock05", block05()), ("makeSofa", sofa())])
-       + JOINT_CLOTH_FN)
+       + JOINT_CLOTH_FN + DOCK_CLOTH_FN)
 a = idx.index(MARK_A); b = idx.index(MARK_B)
 idx_path.write_text(idx[:a] + gen + idx[b:])
 print("updated index.html model block", gen.count("\n"), "lines")
