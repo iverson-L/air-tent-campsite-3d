@@ -79,7 +79,8 @@
   /* toggle switches (plain checkboxes underneath — same ids / JS) */
   .toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; cursor: pointer; }
   .toggle span { flex: 1; }
-  .toggle kbd { font: 600 10.5px/1 ui-monospace, monospace; color: var(--muted); background: #f1f3f6; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; margin-left: 4px; }
+  .toggle kbd { font: 600 10.5px/1 ui-monospace, monospace; color: var(--muted); background: #f1f3f6; border: 1px solid var(--line); border-radius: 4px;
+    padding: 3px 0; min-width: 30px; text-align: center; margin-right: -4px; } /* shortcut badge in a tidy column beside the switch */
   .toggle input { appearance: none; -webkit-appearance: none; width: 34px; height: 20px; border-radius: 999px; background: #cdd2da;
     position: relative; cursor: pointer; flex: none; transition: background .15s; margin: 0; }
   .toggle input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
@@ -106,8 +107,6 @@
     background: rgba(20,22,26,.72); color: #f3f4f6; font-size: 12px; padding: 8px 14px; border-radius: 999px; white-space: nowrap; pointer-events: none; }
   .keys { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.8; }
   .keys kbd { font: 600 10.5px/1 ui-monospace, monospace; color: var(--muted); background: #f1f3f6; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; }
-  #fishBtn { margin-top: 8px; background: #2f7a5b; }
-  #fishBtn kbd { font: 600 10.5px/1 ui-monospace, monospace; background: rgba(255,255,255,.2); border-radius: 4px; padding: 2px 5px; margin-left: 4px; }
   /* fishing prompt / status pill (tap = E) */
   #fishHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
     background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
@@ -185,20 +184,19 @@
     <div class="field"><span>Gap between tents</span><span class="chip" id="gapVal">3.40 m</span></div>
     <input type="range" id="gapSlider" min="3.3" max="3.8" step="0.05" value="3.4" />
     <div id="coverage" class="status"></div>
-    <label class="toggle"><span>Debug view direction <kbd>Tab</kbd></span><input type="checkbox" id="debugDirChk" /></label>
+    <label class="toggle"><span>Debug view direction</span><kbd>Tab</kbd><input type="checkbox" id="debugDirChk" /></label>
   </details>
 
   <details open><summary>Display</summary>
-    <label class="toggle"><span>Flysheet <kbd>1</kbd></span><input type="checkbox" id="showFly" checked /></label>
-    <label class="toggle"><span>Dimension labels <kbd>2</kbd></span><input type="checkbox" id="showLabels" checked /></label>
-    <label class="toggle"><span>Lights <kbd>3</kbd></span><input type="checkbox" id="lightsOn" checked /></label>
-    <label class="toggle"><span>Night mode <kbd>4</kbd></span><input type="checkbox" id="nightMode" /></label>
+    <label class="toggle"><span>Flysheet</span><kbd>1</kbd><input type="checkbox" id="showFly" checked /></label>
+    <label class="toggle"><span>Dimension labels</span><kbd>2</kbd><input type="checkbox" id="showLabels" checked /></label>
+    <label class="toggle"><span>Lights</span><kbd>3</kbd><input type="checkbox" id="lightsOn" checked /></label>
+    <label class="toggle"><span>Night mode</span><kbd>4</kbd><input type="checkbox" id="nightMode" /></label>
   </details>
 
   <details open><summary>Controls</summary>
     <button id="walkBtn" class="btn">🚶 First person mode</button>
-    <button id="fishBtn" class="btn">🎣 Go fishing <kbd>E</kbd></button>
-    <label class="toggle"><span>On-screen controls <kbd>B</kbd></span><input type="checkbox" id="osControlsChk" checked /></label>
+    <label class="toggle"><span>On-screen controls</span><kbd>B</kbd><input type="checkbox" id="osControlsChk" checked /></label>
     <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move the view · <kbd>Shift</kbd> slow · drag to orbit, scroll to zoom</div>
   </details>
 
@@ -218,6 +216,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------- loading screen progress (the build below is split into stages so the bar can repaint) ----------
 const ldFill = document.getElementById('ldFill'), ldPct = document.getElementById('ldPct'), ldStage = document.getElementById('ldStage');
@@ -871,7 +870,7 @@ const makeBlock10 = (() => {
   const matScreenShadow = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   matScreenShadow.onBeforeCompile = sh => {
     sh.fragmentShader = sh.fragmentShader.replace('void main() {',
-      'void main() {\n  if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 0.5) discard;');
+      'void main() {' /* GENERATED (index.html): solid screen shadow, no checkerboard */);
   };
   const matMetal     = new THREE.MeshStandardMaterial({ color: 0x2a2b2e, roughness: 0.6, metalness: 0.5 });
   // interior ridge pillar — light grey structural spine along the apex
@@ -1809,7 +1808,7 @@ const makeBlock09 = (() => {
   const matScreenShadow = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   matScreenShadow.onBeforeCompile = sh => {
     sh.fragmentShader = sh.fragmentShader.replace('void main() {',
-      'void main() {\n  if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 0.5) discard;');
+      'void main() {' /* GENERATED (index.html): solid screen shadow, no checkerboard */);
   };
   const matMetal     = new THREE.MeshStandardMaterial({ color: 0x2a2b2e, roughness: 0.6, metalness: 0.5 });
   // interior ridge pillar — light grey structural spine along the apex
@@ -2884,7 +2883,7 @@ const makeBlock05 = (() => {
   const matScreenShadow = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   matScreenShadow.onBeforeCompile = sh => {
     sh.fragmentShader = sh.fragmentShader.replace('void main() {',
-      'void main() {\n  if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 0.5) discard;');
+      'void main() {' /* GENERATED (index.html): solid screen shadow, no checkerboard */);
   };
 
   // ---------- shape helpers (copied from index.html) ----------
@@ -4344,54 +4343,119 @@ function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
   return out;
 }
 
-// ---------- trees around the campsite (instanced) ----------
+// ---------- tree models (per user: improved) — shared helpers ----------
+// gentle wind sway on the foliage (vertex shader, grows with height above `from`; phase per tree from its position)
+const treeWind = { value: 0 };
+function addSway(mat, from, amt) {
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uWind = treeWind;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWind;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          float sway = max(position.y - ${from.toFixed(2)}, 0.0) * ${amt.toFixed(4)};
+          vec2 ph = instanceMatrix[3].xz * 0.37;
+          transformed.x += sin(uWind * 1.3 + ph.x) * sway;
+          transformed.z += cos(uWind * 1.05 + ph.y) * sway * 0.8;
+        #endif`);
+  };
+  return mat;
+}
+// per-vertex shade: darker deep inside/below, lighter at the tips (multiplied by the per-tree instance colour)
+function shadeVerts(geo, f) {
+  const p = geo.attributes.position, c = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) { const v = f(p.getX(i), p.getY(i), p.getZ(i)); c[i * 3] = c[i * 3 + 1] = c[i * 3 + 2] = v; }
+  geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return geo;
+}
+
+// ---------- conifers (instanced): 4 tiers of drooping, jagged branch skirts round a tall tapering trunk ----------
 {
-  const trunkGeo = new THREE.CylinderGeometry(0.14, 0.22, 2.6, 7); trunkGeo.translate(0, 1.3, 0);
-  const canopyGeo = new THREE.ConeGeometry(1.9, 4.6, 8); canopyGeo.translate(0, 4.4, 0);
+  const tiers = [];
+  for (let i = 0; i < 4; i++) {
+    const r = 2.0 * (1 - i * 0.21), h = 2.1 * (1 - i * 0.12), y0 = 1.45 + i * 1.12;
+    const g = new THREE.ConeGeometry(r, h, 12, 3);
+    g.translate(0, y0 + h / 2, 0);
+    const pos = g.attributes.position;
+    for (let k = 0; k < pos.count; k++) {
+      let x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k);
+      const t = THREE.MathUtils.clamp((y - y0) / h, 0, 1), a = Math.atan2(z, x);
+      const jag = 1 + (0.17 * Math.sin(a * 7 + i * 1.7) + 0.09 * Math.sin(a * 13 + i * 0.6)) * (1 - t); // ragged skirt
+      x *= jag; z *= jag;
+      y -= (1 - t) ** 2 * (0.22 + 0.1 * Math.sin(a * 5 + i));                                           // branches droop
+      pos.setXYZ(k, x, y, z);
+    }
+    g.computeVertexNormals();
+    shadeVerts(g, (x, y, z) => { const rr = Math.hypot(x, z) / r; return 0.62 + 0.5 * Math.min(1, rr) + 0.06 * i; });
+    tiers.push(g);
+  }
+  const canopyGeo = mergeGeometries(tiers);
+  const trunkGeo = new THREE.CylinderGeometry(0.07, 0.24, 5.6, 8); trunkGeo.translate(0, 2.8, 0);   // runs up inside the tiers
+  const flare = new THREE.CylinderGeometry(0.24, 0.34, 0.25, 8); flare.translate(0, 0.12, 0);          // root flare
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 1, map: barkTex });
-  const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: needleTex });
+  const canopyMat = addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: needleTex, vertexColors: true }), 1.5, 0.012);
 
   // 2 anchors + 32 random = 34 total (same count as before)
   const treePos = [[-9.5, 6.5, 1.2], [9.5, -6.5, 1.2], ...placeTrees(32, 16, 38, 0.8, 1.7, 1.9).map(t => [t.x, t.z, t.sc])];
 
-  const trunkIM = new THREE.InstancedMesh(trunkGeo, trunkMat, treePos.length);
+  const trunkIM = new THREE.InstancedMesh(mergeGeometries([trunkGeo, flare]), trunkMat, treePos.length);
   const canopyIM = new THREE.InstancedMesh(canopyGeo, canopyMat, treePos.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const col = new THREE.Color();
   treePos.forEach(([x, z, sc], i) => {
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI);
+    q.setFromEuler(new THREE.Euler((Math.random() - 0.5) * 0.05, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.05)); // slight lean
     p.set(x, 0, z); s.set(sc, sc * (0.9 + Math.random() * 0.3), sc);
     m4.compose(p, q, s);
     trunkIM.setMatrixAt(i, m4);
     canopyIM.setMatrixAt(i, m4);
-    col.setHSL(0.28 + Math.random() * 0.06, 0.45 + Math.random() * 0.2, 0.28 + Math.random() * 0.12);
+    col.setHSL(0.29 + Math.random() * 0.06, 0.42 + Math.random() * 0.2, 0.26 + Math.random() * 0.1);
     canopyIM.setColorAt(i, col);
   });
   trunkIM.castShadow = canopyIM.castShadow = true;
+  canopyIM.receiveShadow = true;
   scene.add(trunkIM, canopyIM);
 }
 
-// ---------- broadleaf trees mixed into the ring (blob canopies) ----------
+// ---------- broadleaf trees (instanced): trunk with three limbs into a lumpy crown of 6 foliage clumps ----------
 {
-  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 2.2, 7); trunkGeo.translate(0, 1.1, 0);
-  const canopyGeo = new THREE.IcosahedronGeometry(1.8, 1); canopyGeo.scale(1, 0.72, 1); canopyGeo.translate(0, 3.1, 0); // bottom overlaps trunk top (no gap)
+  const limbs = [new THREE.CylinderGeometry(0.17, 0.27, 2.6, 8).translate(0, 1.3, 0)];
+  for (const [ang, tilt, len] of [[0.3, 0.55, 1.5], [2.4, 0.6, 1.4], [4.3, 0.5, 1.3]]) {            // limbs fork from 2.1 m
+    const l = new THREE.CylinderGeometry(0.06, 0.12, len, 6).translate(0, len / 2, 0);
+    l.rotateZ(-tilt); l.rotateY(ang); l.translate(0, 2.1, 0);
+    limbs.push(l);
+  }
+  const clumps = [];
+  for (const [x, y, z, r] of [[0, 3.55, 0, 1.45], [0.95, 3.15, 0.35, 1.05], [-0.85, 3.25, -0.4, 1.1],
+                              [0.2, 4.15, -0.55, 1.0], [-0.35, 4.0, 0.7, 0.95], [0.6, 3.0, -0.85, 0.85]]) {
+    const g = new THREE.IcosahedronGeometry(r, 2);
+    const pos = g.attributes.position;
+    for (let k = 0; k < pos.count; k++) {
+      const vx = pos.getX(k), vy = pos.getY(k), vz = pos.getZ(k);
+      const n = 1 + 0.13 * Math.sin(vx * 3.1 + vz * 2.3) * Math.cos(vy * 2.7 + vx) + 0.06 * Math.sin(vz * 6.1 + vy * 4.3);
+      pos.setXYZ(k, vx * n + x, vy * n * 0.85 + y, vz * n + z);                                        // lumpy, a bit flattened
+    }
+    g.computeVertexNormals();
+    shadeVerts(g, (px, py) => 0.6 + 0.45 * THREE.MathUtils.clamp((py - 2.6) / 2.4, 0, 1));             // darker underside
+    clumps.push(g);
+  }
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5d4130, roughness: 1, map: barkTex });
-  const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: leafTex });
+  const canopyMat = addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: leafTex, vertexColors: true }), 2.4, 0.016);
   const pos = placeTrees(9, 15, 39, 0.9, 1.7, 1.8);
-  const trunkIM = new THREE.InstancedMesh(trunkGeo, trunkMat, pos.length);
-  const canopyIM = new THREE.InstancedMesh(canopyGeo, canopyMat, pos.length);
+  const trunkIM = new THREE.InstancedMesh(mergeGeometries(limbs), trunkMat, pos.length);
+  const canopyIM = new THREE.InstancedMesh(mergeGeometries(clumps), canopyMat, pos.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const col = new THREE.Color();
   pos.forEach(({ x, z, sc }, i) => {
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI);
-    p.set(x, 0, z); s.set(sc, sc * (0.85 + Math.random() * 0.4), sc);
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
+    p.set(x, 0, z); s.set(sc, sc * (0.85 + Math.random() * 0.3), sc);
     m4.compose(p, q, s);
     trunkIM.setMatrixAt(i, m4);
     canopyIM.setMatrixAt(i, m4);
-    col.setHSL(0.26 + Math.random() * 0.07, 0.5 + Math.random() * 0.2, 0.3 + Math.random() * 0.12);
+    col.setHSL(0.24 + Math.random() * 0.08, 0.48 + Math.random() * 0.2, 0.3 + Math.random() * 0.1);
     canopyIM.setColorAt(i, col);
   });
   trunkIM.castShadow = canopyIM.castShadow = true;
+  canopyIM.receiveShadow = true;
   scene.add(trunkIM, canopyIM);
 }
 
@@ -4607,49 +4671,104 @@ const pond = (() => {
     }
   }
 
-  // koi: ellipsoid body with a patterned skin, fanned tail + pectoral fins (horizontal, so they read from above),
-  // each swimming its own lazy loop at its own depth; the tail wags with the stroke
-  const koiTex = (base, patch, spots) => {
+  // koi (per user: improved model). Body in metres, facing +z: a lathed fish profile (round head, deep shoulders,
+  // narrow tail stem) ≈ 40 cm + a 16 cm flowing double-lobed tail; dorsal, pectoral and pelvic fins, eyes, barbels.
+  // Everything is built in body coordinates and BENT by one travelling sine wave in the vertex shader (uSwim), so
+  // the body, fins and tail undulate together as it swims. Skins: real koi varieties with scale patterning.
+  const KOI = [
+    { name: 'Kohaku',        base: '#f6f3ec', belly: '#fbfaf6', fin: 0xf3efe6, patches: [['#d63a1b', 4]] },
+    { name: 'Kujaku',        base: '#e8742a', belly: '#f2c79c', fin: 0xf1b27a, patches: [['#f6efe4', 3]], net: true },
+    { name: 'Yamabuki Ogon', base: '#f0b429', belly: '#f6d27a', fin: 0xf2c55a, patches: [], metal: 0.55 },
+    { name: 'Showa',         base: '#1b1b1d', belly: '#3a3a3c', fin: 0x2a2a2c, patches: [['#e2571e', 3], ['#f4f1ea', 2]] },
+    { name: 'Shiro Utsuri',  base: '#f4f1ea', belly: '#fbfaf6', fin: 0xece8de, patches: [['#1b1b1d', 4]] },
+    { name: 'Benigoi',       base: '#d6411c', belly: '#ea8a5c', fin: 0xe0663a, patches: [] },
+  ];
+  // skin: canvas x = round the body (dorsal stripe at x 128, belly at the edges), canvas y = along it (nose at top)
+  const koiSkin = k => {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = base; ctx.fillRect(0, 0, 256, 128);
-    ctx.fillStyle = patch;
-    for (let i = 0; i < spots; i++) {
-      ctx.beginPath();
-      ctx.ellipse(Math.random() * 256, 20 + Math.random() * 60, 18 + Math.random() * 30, 10 + Math.random() * 18, Math.random() * 3, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.fillStyle = k.base; ctx.fillRect(0, 0, 256, 128);
+    const belly = ctx.createLinearGradient(0, 0, 256, 0);
+    belly.addColorStop(0, k.belly); belly.addColorStop(0.2, k.base); belly.addColorStop(0.8, k.base); belly.addColorStop(1, k.belly);
+    ctx.fillStyle = belly; ctx.fillRect(0, 0, 256, 128);
+    for (const [col, n] of k.patches) {                     // varieties' markings, mostly over the back
+      ctx.fillStyle = col;
+      for (let i = 0; i < n; i++) {
+        ctx.beginPath();
+        ctx.ellipse(128 + (Math.random() - 0.5) * 110, 8 + Math.random() * 100, 18 + Math.random() * 26, 9 + Math.random() * 14, (Math.random() - 0.5) * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.strokeStyle = k.net ? 'rgba(90,40,10,0.45)' : (k.base === '#1b1b1d' ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)');
+    ctx.lineWidth = k.net ? 1.4 : 1;                        // scales (a darker net on Kujaku)
+    for (let y = 18, row = 0; y < 124; y += 6, row++) for (let x = (row % 2) * 4; x < 256; x += 8) {
+      ctx.beginPath(); ctx.arc(x, y, 4.5, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
     }
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
   };
-  const koiTypes = [['#f4f1ea', '#e0461c', 5], ['#e8681e', '#f6efe4', 3], ['#f2b632', '#f7e2a0', 2], ['#1d1d1f', '#e2571e', 4], ['#f4f1ea', '#1d1d1f', 4], ['#e0461c', '#e0461c', 0]];
-  const finMat = underwater(new THREE.MeshStandardMaterial({ color: 0xf6e7d8, roughness: 0.5, transparent: true, opacity: 0.75, side: THREE.DoubleSide }));
-  const tailShape = new THREE.Shape();
-  tailShape.moveTo(0, 0);
-  tailShape.quadraticCurveTo(-0.06, 0.05, -0.075, 0.12);
-  tailShape.quadraticCurveTo(-0.02, 0.08, 0, 0.085);
-  tailShape.quadraticCurveTo(0.02, 0.08, 0.075, 0.12);
-  tailShape.quadraticCurveTo(0.06, 0.05, 0, 0);
-  const tailGeo = new THREE.ShapeGeometry(tailShape, 6); tailGeo.rotateX(-Math.PI / 2); // shape +y → backwards (−z)
-  const finGeo = new THREE.CircleGeometry(0.035, 10); finGeo.scale(1, 0.55, 1); finGeo.rotateX(-Math.PI / 2);
-  const bodyGeo = new THREE.SphereGeometry(1, 20, 12);
-  const koiNames = ['Kohaku', 'Kujaku', 'Yamabuki Ogon', 'Showa', 'Shiro Utsuri', 'Benigoi'];
-  // one koi (body ≈ 45 cm long incl. tail at scale 1), facing +z; also used for the fish you catch (fishing spot)
-  const buildKoi = ([b, pch, n]) => {
-    const f = new THREE.Group();
-    const body = new THREE.Mesh(bodyGeo, underwater(new THREE.MeshStandardMaterial({ map: koiTex(b, pch, n), roughness: 0.35 })));
-    body.scale.set(0.05, 0.042, 0.18); f.add(body);
-    const tail = new THREE.Mesh(tailGeo, finMat); tail.position.z = -0.165; f.add(tail);
+  // shared geometry, all in body coordinates
+  const prof = s => s < 0.6 ? 0.058 * (0.2 + 0.8 * Math.sin(Math.PI / 2 * s / 0.6) ** 1.2)
+                            : 0.058 * Math.sqrt(Math.max(0, 1 - ((s - 0.6) / 0.4) ** 2.2));   // s: 0 tail stem → 1 nose
+  const bodyTop = z => prof((z + 0.2) / 0.4);
+  const bodyGeo = new THREE.LatheGeometry(Array.from({ length: 25 }, (_, i) => new THREE.Vector2(prof(i / 24), -0.2 + 0.4 * i / 24)), 18);
+  bodyGeo.rotateX(Math.PI / 2); bodyGeo.scale(0.82, 1, 1);    // along +z, a little narrower than deep
+  const shapeGeo = (pts, map) => {                            // closed curve of [x, y] → flat geometry, then placed
+    const sh = new THREE.Shape(); sh.moveTo(...pts[0]);
+    for (let i = 1; i < pts.length; i += 2) sh.quadraticCurveTo(...pts[i], ...pts[i + 1]);
+    const g = new THREE.ShapeGeometry(sh, 6); map(g); return g;
+  };
+  // tail: a VERTICAL forked caudal fin behind the stem (shape x = −z); the swim wave sweeps it side to side.
+  // (A horizontal fan, tried first, sheared into a flapping blade when the body bent — per user.)
+  const tailGeo = shapeGeo([[0.19, 0.014], [0.25, 0.06], [0.37, 0.092], [0.33, 0.036], [0.312, 0], [0.33, -0.036], [0.37, -0.092], [0.25, -0.06], [0.19, -0.014]],
+    g => { g.rotateY(Math.PI / 2);
+      // twist the lobes apart a little (upper lobe → +x, lower → −x) so the tail also fans out seen from above
+      const pp = g.attributes.position; for (let i = 0; i < pp.count; i++) pp.setX(i, pp.getX(i) + pp.getY(i) * 0.6); });
+  // dorsal fin: vertical, riding the back from the shoulders to near the tail stem
+  const dorsalGeo = shapeGeo([[-0.06, bodyTop(0.06) - 0.004], [-0.04, bodyTop(0.04) + 0.04], [0.02, bodyTop(-0.02) + 0.03], [0.09, bodyTop(-0.09) + 0.02],
+    [0.12, bodyTop(-0.12) - 0.004], [0.03, bodyTop(-0.03) - 0.01], [-0.06, bodyTop(0.06) - 0.004]], g => g.rotateY(Math.PI / 2));
+  // pectoral (big paddles behind the head) + pelvic fins, both sides
+  // side fins angle DOWN ≈ 30° from their root on the flank (flat ones stuck out like sails)
+  const sideFin = (x0, z0, len, wid, y) => [1, -1].map(sx => shapeGeo(
+    [[sx * x0, -z0], [sx * (x0 + len * 0.9), -(z0 + wid * 0.2)], [sx * (x0 + len), -(z0 - wid * 0.6)], [sx * (x0 + len * 0.5), -(z0 - wid * 1.2)], [sx * x0, -(z0 - wid)]],
+    g => { g.rotateX(-Math.PI / 2); g.translate(-sx * x0, 0, 0); g.rotateZ(-sx * 0.55); g.translate(sx * x0, y, 0); }));
+  const finGeos = [dorsalGeo, ...sideFin(0.04, 0.11, 0.05, 0.05, -0.026), ...sideFin(0.026, -0.01, 0.03, 0.03, -0.04)];
+  const eyeGeo = new THREE.SphereGeometry(0.0065, 10, 8);
+  const barbelGeo = new THREE.CylinderGeometry(0.0012, 0.0008, 0.024, 4);
+  const eyeMat = underwater(new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.15 }));
+  // the swim bend, chained after the underwater-absorption patch
+  const bend = (mat, swimU) => {
+    const prev = mat.onBeforeCompile;
+    mat.onBeforeCompile = (sh, r) => {
+      prev(sh, r);
+      sh.uniforms.uSwim = swimU;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uSwim;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          float bz = smoothstep(0.08, -0.36, position.z);           // still at the head, full at the tail tip
+          transformed.x += sin(uSwim - position.z * 12.0) * 0.036 * bz;`);
+    };
+    return mat;
+  };
+  const koiNames = KOI.map(k => k.name);
+  const koiTypes = KOI;
+  // one koi (≈ 56 cm nose → tail tip at scale 1), facing +z; also used for the fish you catch (fishing spot).
+  // Returns { f, swim(phase) } — call swim every frame with an advancing phase (faster = more frantic).
+  const buildKoi = k => {
+    const f = new THREE.Group(), swimU = { value: Math.random() * 6 };
+    const body = new THREE.Mesh(bodyGeo, bend(underwater(new THREE.MeshStandardMaterial({ map: koiSkin(k), roughness: k.metal ? 0.3 : 0.38, metalness: k.metal || 0.05 })), swimU));
+    const finMat = bend(underwater(new THREE.MeshStandardMaterial({ color: k.fin, roughness: 0.5, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false })), swimU);
+    f.add(body, new THREE.Mesh(tailGeo, finMat), ...finGeos.map(gf => new THREE.Mesh(gf, finMat)));
     for (const sx of [-1, 1]) {
-      const fin = new THREE.Mesh(finGeo, finMat);
-      fin.position.set(sx * 0.055, -0.01, 0.06); fin.rotation.y = sx * 0.6; f.add(fin);
+      const eye = new THREE.Mesh(eyeGeo, eyeMat); eye.position.set(sx * 0.031, 0.013, 0.155); f.add(eye);
+      const bar = new THREE.Mesh(barbelGeo, eyeMat); bar.position.set(sx * 0.012, -0.012, 0.19); bar.rotation.set(0.9, 0, sx * 0.4); f.add(bar);
     }
-    return { f, tail };
+    return { f, swim: ph => { swimU.value = ph; } };
   };
   const fish = koiTypes.concat(koiTypes.slice(0, 2)).map((type, i) => {
-    const { f, tail } = buildKoi(type), L = 0.85 + Math.random() * 0.35;
+    const { f, swim } = buildKoi(type), L = 0.65 + Math.random() * 0.3;   // 36–53 cm
     f.scale.setScalar(L);
     g.add(f);
-    return { f, tail, cx: (Math.random() - 0.5) * 1.2, cz: (Math.random() - 0.5) * 0.9, a: 0.9 + Math.random() * 1.2,
+    return { f, swim, cx: (Math.random() - 0.5) * 1.2, cz: (Math.random() - 0.5) * 0.9, a: 0.9 + Math.random() * 1.2,
       b: 0.6 + Math.random() * 0.9, w: (0.12 + Math.random() * 0.12) * (i % 2 ? 1 : -1), ph: Math.random() * 6,
       y: Y - 0.12 - Math.random() * 0.14 };
   });
@@ -4662,12 +4781,12 @@ const pond = (() => {
         const x = k.cx + k.a * wob * Math.cos(ang), z = k.cz + k.b * wob * Math.sin(ang);
         const vx = -k.a * wob * Math.sin(ang) * k.w, vz = k.b * wob * Math.cos(ang) * k.w;
         k.f.position.set(x, k.y + 0.02 * Math.sin(t * 0.7 + k.ph), z);
-        k.f.rotation.y = Math.atan2(vx, vz) + 0.08 * Math.sin(t * 8 + k.ph);  // body sways against the tail
-        k.tail.rotation.y = 0.45 * Math.sin(t * 8 + k.ph + 1.2);
+        k.f.rotation.y = Math.atan2(vx, vz) + 0.025 * Math.sin(t * 6 + k.ph + Math.PI); // head yaws gently against the stroke
+        k.swim(t * 6 + k.ph);                                                  // body + fins undulate (≈ 1 beat/s)
       }
     },
     // a fresh koi of a random variety (for the catch): { f, tail, name } — not added to the scene
-    makeKoi() { const i = Math.random() * koiTypes.length | 0; return { ...buildKoi(koiTypes[i]), name: koiNames[i] }; },
+    makeKoi() { const i = Math.random() * koiTypes.length | 0; return { ...buildKoi(koiTypes[i]), name: koiNames[i] }; }, // ≈ 56 cm at scale 1
     // water at world (x, z)? → { bedY, waterY } (bed height from the same profile as the basin), or null on dry land
     depthAt(x, z) {
       const dx = (x - P.x) / P.sx, dz = z - P.z, a = Math.atan2(dz, dx), f = Math.hypot(dx, dz) / pondR(a);
@@ -4686,35 +4805,146 @@ const pond = (() => {
 })();
 
 await stage('Setting up camp furniture…', 75);
-// ---------- fire pit (front centre of the gravel area) ----------
+// ---------- campfire (per user: improved) — front centre of the gravel area ----------
+// Rough stone ring on a soot-dark patch, ash bed with glowing embers, a teepee of six split logs charred toward the
+// top with glowing coals at their feet, layered flickering flame sprites (orange tongues round a yellow-white core),
+// sparks drifting up and fading, a thin smoke plume, and a small firewood stack beside the pit.
 const fireGroup = new THREE.Group();
-{
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8a857c, roughness: 1 });
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2;
-    const st = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16 + Math.random() * 0.06, 0), stoneMat);
-    st.position.set(Math.cos(a) * 0.45, 0.1, Math.sin(a) * 0.45);
-    st.rotation.set(Math.random(), Math.random(), Math.random());
-    st.castShadow = true;
-    fireGroup.add(st);
+const campfire = (() => {
+  const G = fireGroup;
+  const canvasTex = (w, h, draw) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; };
+  // soot patch on the gravel (soft-edged)
+  const soot = new THREE.Mesh(new THREE.CircleGeometry(0.75, 32), new THREE.MeshStandardMaterial({ color: 0x15130f, roughness: 1, transparent: true, depthWrite: false,
+    alphaMap: canvasTex(128, 128, (x, w, h) => { const g = x.createRadialGradient(64, 64, 20, 64, 64, 64); g.addColorStop(0, '#fff'); g.addColorStop(1, '#000'); x.fillStyle = g; x.fillRect(0, 0, w, h); }) }));
+  soot.rotation.x = -Math.PI / 2; soot.position.y = 0.007; soot.receiveShadow = true; G.add(soot);
+  // ash bed: grey ash, charcoal bits, ember spots that glow (emissive map)
+  const ashMap = canvasTex(256, 256, (x, w, h) => { x.fillStyle = '#4a4744'; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 260; i++) { x.fillStyle = Math.random() < 0.5 ? '#2a2826' : '#7a7672'; x.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 6, 2 + Math.random() * 4); } });
+  const emberMap = canvasTex(256, 256, (x, w, h) => { x.fillStyle = '#000'; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 70; i++) { const px = 128 + (Math.random() - 0.5) * 150, py = 128 + (Math.random() - 0.5) * 150, r = 3 + Math.random() * 9;
+      const g = x.createRadialGradient(px, py, 0, px, py, r); g.addColorStop(0, '#ffb060'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.beginPath(); x.arc(px, py, r, 0, 7); x.fill(); } });
+  const bedMat = new THREE.MeshStandardMaterial({ map: ashMap, emissiveMap: emberMap, emissive: 0xff5a14, emissiveIntensity: 1, roughness: 1 });
+  const bed = new THREE.Mesh(new THREE.CircleGeometry(0.4, 28), bedMat);
+  bed.rotation.x = -Math.PI / 2; bed.position.y = 0.03; bed.receiveShadow = true; G.add(bed);
+  // stone ring: rough rounded stones, varied tints
+  const stoneGeo = new THREE.DodecahedronGeometry(1, 1);
+  { const pp = stoneGeo.attributes.position;
+    for (let i = 0; i < pp.count; i++) { const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i), n = 1 + 0.12 * Math.sin(x * 5.1 + y * 3.3) * Math.cos(z * 4.7 - y * 2.1);
+      pp.setXYZ(i, x * n, y * n, z * n); }
+    stoneGeo.computeVertexNormals(); }
+  for (let i = 0; i < 15; i++) {                                  // ≈ 22–30 cm stones, edge to edge round a 1.1 m ring
+    const a = (i / 15) * Math.PI * 2 + (Math.random() - 0.5) * 0.1, sc = 0.09 + Math.random() * 0.035;
+    const st = new THREE.Mesh(stoneGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.08 + Math.random() * 0.05, 0.08 + Math.random() * 0.08, 0.32 + Math.random() * 0.16), roughness: 0.95 }));
+    st.scale.set(sc * 1.25, sc * 0.75, sc);
+    st.position.set(Math.cos(a) * 0.55, sc * 0.5, Math.sin(a) * 0.55);
+    st.rotation.set(Math.random() * 0.4, -a + (Math.random() - 0.5) * 0.5, Math.random() * 0.4);
+    st.castShadow = st.receiveShadow = true;
+    G.add(st);
   }
-  const bed = new THREE.Mesh(new THREE.CircleGeometry(0.38, 20), new THREE.MeshStandardMaterial({ color: 0x1c1a17, roughness: 1 }));
-  bed.rotation.x = -Math.PI / 2; bed.position.y = 0.06;
-  fireGroup.add(bed);
-  const logMat = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
-  for (let i = 0; i < 3; i++) {
-    const lg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 6), logMat);
-    lg.rotation.z = Math.PI / 2 - 0.15;
-    lg.rotation.y = (i / 3) * Math.PI;
-    lg.position.y = 0.18;
-    fireGroup.add(lg);
+  // logs: split-log cylinder, bark-textured, charred black toward the burning end (vertex colours)
+  const logGeo = (len, r, char) => {
+    const g = new THREE.CylinderGeometry(r * 0.9, r, len, 9, 4);
+    const pp = g.attributes.position, c = new Float32Array(pp.count * 3);
+    for (let i = 0; i < pp.count; i++) { const t = (pp.getY(i) + len / 2) / len, v = char ? THREE.MathUtils.lerp(1, 0.18, THREE.MathUtils.smoothstep(t, 0.35, 0.95)) : 1; c[i * 3] = c[i * 3 + 1] = c[i * 3 + 2] = v; }
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    return g;
+  };
+  const logMat = new THREE.MeshStandardMaterial({ map: barkTex, color: 0x7a5a40, roughness: 1, vertexColors: true });
+  const burnGeo = logGeo(0.6, 0.05, true), Y = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < 6; i++) {                                    // teepee: feet on a 26 cm circle, tips meeting above the centre
+    const a = (i / 6) * Math.PI * 2 + 0.3, foot = new THREE.Vector3(Math.cos(a) * 0.32, 0.04, Math.sin(a) * 0.32);
+    const tip = new THREE.Vector3(Math.cos(a + 0.4) * 0.04, 0.44, Math.sin(a + 0.4) * 0.04), d = tip.clone().sub(foot);
+    const lg = new THREE.Mesh(burnGeo, logMat);
+    lg.position.copy(foot).addScaledVector(d, 0.5);
+    lg.quaternion.setFromUnitVectors(Y, d.normalize());
+    lg.castShadow = true;
+    G.add(lg);
   }
-}
-const flameOuter = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.42, 8), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.9 }));
-flameOuter.position.y = 0.35;
-const flameInner = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.28, 8), new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.95 }));
-flameInner.position.y = 0.3;
-fireGroup.add(flameOuter, flameInner);
+  // glowing coals at the logs' feet
+  const coalMat = new THREE.MeshStandardMaterial({ color: 0x1a0d08, emissive: 0xff4a0c, emissiveIntensity: 1.2, roughness: 0.9, flatShading: true });
+  const coalGeo = new THREE.DodecahedronGeometry(1, 0);
+  for (let i = 0; i < 14; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 0.22, sc = 0.025 + Math.random() * 0.025;
+    const co = new THREE.Mesh(coalGeo, coalMat); co.scale.setScalar(sc);
+    co.position.set(Math.cos(a) * r, 0.03 + sc * 0.5, Math.sin(a) * r); co.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    G.add(co);
+  }
+  // firewood stack beside the pit (unburnt)
+  const woodGeo = logGeo(0.55, 0.055, false);
+  for (const [x, y, z, ry] of [[0.95, 0.055, -0.55, 0], [0.95, 0.055, -0.4, 0], [0.95, 0.055, -0.25, 0], [0.95, 0.16, -0.47, 0.1], [0.95, 0.16, -0.33, -0.08]]) {
+    const w = new THREE.Mesh(woodGeo, logMat); w.rotation.set(0, ry, Math.PI / 2); w.position.set(x, y, z); w.castShadow = w.receiveShadow = true; G.add(w);
+  }
+
+  // flames: soft teardrop sprite (additive), anchored at its base; orange tongues round a yellow-white core
+  const flameTex = canvasTex(128, 256, (x, w, h) => {
+    x.filter = 'blur(6px)';
+    const g = x.createLinearGradient(0, h, 0, 0);
+    g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.45, 'rgba(255,255,255,0.95)'); g.addColorStop(0.8, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g;
+    x.beginPath(); x.moveTo(64, 10); x.bezierCurveTo(100, 90, 118, 170, 96, 222); x.quadraticCurveTo(64, 250, 32, 222); x.bezierCurveTo(10, 170, 28, 90, 64, 10); x.fill();
+  });
+  const flames = [];
+  const addFlame = (color, w, h, r, y, op) => {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameTex, color, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    const a = Math.random() * Math.PI * 2, rr = Math.random() * r;
+    sp.center.set(0.5, 0.05);
+    sp.position.set(Math.cos(a) * rr, y, Math.sin(a) * rr);
+    G.add(sp);
+    flames.push({ sp, w, h, x: sp.position.x, z: sp.position.z, ph: Math.random() * 6, fr: 7 + Math.random() * 6, op });
+  };
+  for (let i = 0; i < 7; i++) addFlame(0xff5a14, 0.3 + Math.random() * 0.14, 0.8 + Math.random() * 0.35, 0.14, 0.06, 1.0);   // outer tongues, licking above the logs
+  for (let i = 0; i < 5; i++) addFlame(0xffa63a, 0.22 + Math.random() * 0.08, 0.6 + Math.random() * 0.25, 0.09, 0.08, 1.0);    // middle
+  for (let i = 0; i < 3; i++) addFlame(0xfff0b0, 0.13 + Math.random() * 0.05, 0.38 + Math.random() * 0.12, 0.05, 0.08, 1.0);   // hot core
+
+  // sparks: points that rise, drift and fade (vertex colours → black = invisible with additive blending)
+  const NS = 40, sPos = new Float32Array(NS * 3), sCol = new Float32Array(NS * 3), sparks = [];
+  const sGeo = new THREE.BufferGeometry();
+  sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3)); sGeo.setAttribute('color', new THREE.BufferAttribute(sCol, 3));
+  const sparkPts = new THREE.Points(sGeo, new THREE.PointsMaterial({ size: 0.03, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  sparkPts.frustumCulled = false;
+  G.add(sparkPts);
+  const respawn = sp => { const a = Math.random() * 6.28, r = Math.random() * 0.12;
+    Object.assign(sp, { x: Math.cos(a) * r, y: 0.25 + Math.random() * 0.2, z: Math.sin(a) * r, vx: (Math.random() - 0.5) * 0.25, vy: 0.7 + Math.random() * 0.8, vz: (Math.random() - 0.5) * 0.25, life: 0, max: 0.9 + Math.random() * 1.4 }); };
+  for (let i = 0; i < NS; i++) { const sp = {}; respawn(sp); sp.life = Math.random() * sp.max; sparks.push(sp); }
+
+  // smoke: a few soft grey puffs rising, swelling and fading on a loop
+  const smokeTex = canvasTex(128, 128, (x, w, h) => { const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, w, h); });
+  const smoke = Array.from({ length: 6 }, (_, i) => {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: 0x9a9a98, transparent: true, opacity: 0, depthWrite: false }));
+    G.add(sp);
+    return { sp, t0: i / 6 };
+  });
+
+  return {
+    update(t, dt, night) {
+      const glow = 0.85 + 0.15 * Math.sin(t * 7) + 0.08 * Math.sin(t * 17.3);
+      bedMat.emissiveIntensity = (night ? 1.5 : 0.9) * glow;
+      coalMat.emissiveIntensity = (night ? 1.8 : 1.1) * (0.8 + 0.2 * Math.sin(t * 5 + 1));
+      for (const f of flames) {
+        const k = 1 + 0.22 * Math.sin(t * f.fr + f.ph) + 0.1 * Math.sin(t * f.fr * 2.3 + f.ph * 2);
+        f.sp.scale.set(f.w * (1.05 - 0.12 * (k - 1)), f.h * k, 1);
+        f.sp.position.x = f.x + Math.sin(t * 3.1 + f.ph) * 0.025;
+        f.sp.position.z = f.z + Math.cos(t * 2.7 + f.ph) * 0.025;
+        f.sp.material.opacity = f.op * (0.85 + 0.15 * Math.sin(t * f.fr * 1.7 + f.ph));
+      }
+      sparks.forEach((sp, i) => {
+        sp.life += dt;
+        if (sp.life > sp.max) respawn(sp);
+        sp.vx += (Math.random() - 0.5) * dt * 0.8; sp.vz += (Math.random() - 0.5) * dt * 0.8;
+        sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.z += sp.vz * dt;
+        const fade = Math.max(0, 1 - sp.life / sp.max);
+        sPos.set([sp.x, sp.y, sp.z], i * 3); sCol.set([1.0 * fade, 0.55 * fade, 0.18 * fade], i * 3);
+      });
+      sGeo.attributes.position.needsUpdate = sGeo.attributes.color.needsUpdate = true;
+      for (const s of smoke) {
+        const u = ((t / 7) + s.t0) % 1;                    // 7 s per puff, staggered
+        s.sp.position.set(Math.sin(t * 0.4 + s.t0 * 6) * 0.15 * u + 0.25 * u, 0.7 + u * 2.6, Math.cos(t * 0.3 + s.t0 * 5) * 0.12 * u);
+        s.sp.scale.setScalar(0.35 + u * 1.3);
+        s.sp.material.opacity = (night ? 0.08 : 0.16) * Math.sin(Math.PI * u);
+      }
+    },
+  };
+})();
 const fireLight = new THREE.PointLight(0xff8c3a, 1.2, 7, 2);
 fireLight.position.set(0, 0.6, 0);
 fireGroup.add(fireLight);
@@ -5145,8 +5375,8 @@ function buildLightPole(x, z, away) {
 }
 
 // ---------- fishing spot (per user): folding stool, rod on a forked rest and a bucket on the pond's east bank.
-// E sits you down and casts; wait for the bobber to dip, press E on the bite to reel a koi in (then it's released).
-// WASD / Esc stands you up. The 🎣 button in the panel and tapping the hint do the same on touch screens. ----------
+// In first person, walk up to the stool and press E to sit down and cast; wait for the bobber to dip, press E on the
+// bite to reel a koi in (then it's released). WASD / Esc stands you up. Tapping the hint pill = E on touch screens. ----------
 fishing = (() => {
   const P = POND, M = chairMats, V = (x, y, z) => new THREE.Vector3(x, y, z);
   const a0 = P.fishA, edgeR = pondR(a0);
@@ -5272,15 +5502,15 @@ fishing = (() => {
   }
   function onE() {
     if (!active) {
-      // in first person you have to walk up to the stool; from the orbit view E takes you straight there
-      if (walking && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) > 2.5) return;
+      // first person only (per user): walk up to the stool and press E
+      if (!walking || Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) > 2.5) return;
       start(); return;
     }
     if (state === 'ready') cast();
     else if (state === 'wait') { go('ready'); say('Too early — the fish swam off. ' + IDLE); }
     else if (state === 'bite') {
       catchFish = pond.makeKoi(); catchName = catchFish.name; catchCm = 28 + Math.round(Math.random() * 36);
-      catchFish.f.scale.setScalar(catchCm / 45);
+      catchFish.f.scale.setScalar(catchCm / 56);
       scene.add(catchFish.f);
       go('reel'); say('Reeling in…');
     }
@@ -5344,7 +5574,7 @@ fishing = (() => {
       else { _v.copy(bank).lerp(V(tip.x, tip.y - 0.35, tip.z), (k - 0.75) / 0.25); }
       catchFish.f.position.copy(_v);
       catchFish.f.lookAt(k < 0.75 ? bank : V(_v.x, _v.y - 1, _v.z));
-      catchFish.tail.rotation.y = Math.sin(t * 24) * 0.6;
+      catchFish.swim(t * 24);                       // thrashing
       bobber.position.copy(_v); bobber.position.y += 0.12;
       drawLine(tip, bobber.position, 0.02);
       if (k >= 1) {
@@ -5357,7 +5587,7 @@ fishing = (() => {
       // dangling under the tip, wriggling; then let go
       catchFish.f.position.set(tip.x, tip.y - 0.35 - catchCm / 200, tip.z);
       catchFish.f.rotation.set(-Math.PI / 2 + Math.sin(t * 9) * 0.25, Math.sin(t * 5) * 0.4, 0);
-      catchFish.tail.rotation.y = Math.sin(t * 18) * 0.5;
+      catchFish.swim(t * 18);
       bobber.position.set(tip.x, tip.y - 0.25, tip.z);
       drawLine(tip, bobber.position, 0);
       if (tState > 3.2) { scene.remove(catchFish.f); catchFish = null; go('ready'); say(IDLE); }
@@ -5405,6 +5635,16 @@ makeString(new THREE.Vector3(0, 2.95, -3), new THREE.Vector3(9.5, 4.0, -6.5), 0.
 const stringLight = new THREE.PointLight(0xffc46b, 0, 10, 2);
 stringLight.position.set(0, 2.3, 0);
 scene.add(stringLight);
+// warm glow where the string lights are tied into the two anchor trees (per user: at night those trees stayed dark)
+// Each sits ~3 m out from its trunk along the string toward the flysheet pole — outside the canopy (inside it, it
+// burned a hot spot into the foliage) — so the string's last bulbs wash over the tree.
+const treeLights = [[[-9.5, 6.5], [0, 3]], [[9.5, -6.5], [0, -3]]].map(([[tx, tz], [px, pz]]) => {
+  const d = new THREE.Vector2(px - tx, pz - tz).normalize();
+  const l = new THREE.PointLight(0xffc46b, 0, 9, 1.4);
+  l.position.set(tx + d.x * 3.0, 3.4, tz + d.y * 3.0);
+  scene.add(l);
+  return l;
+});
 
 // ---------- night mode ----------
 let isNight = false;
@@ -5431,6 +5671,7 @@ function applyLights() {
   const night = isNight && lightsOn;
   bulbMat.emissiveIntensity = night ? 2.4 : 0;                  // string bulbs glow
   stringLight.intensity = night ? 1.6 : 0;
+  for (const l of treeLights) l.intensity = night ? 2.6 : 0;   // the anchor trees the strings are tied to
   for (const l of tableLamps) { l.glow.emissiveIntensity = night ? 1.8 : 0; l.light.intensity = night ? 0.9 : 0; }
   // tent lanterns: on by day (they light the interiors), brighter at night; the mesh screens glow warm from inside
   for (const t of [tentL, tentR, block05, u3b10, u3b09, u3b05, solo05]) {
@@ -5547,7 +5788,6 @@ document.getElementById('showLabels').addEventListener('change', e => {
 });
 document.getElementById('nightMode').addEventListener('change', e => setNight(e.target.checked));
 document.getElementById('lightsOn').addEventListener('change', e => { lightsOn = e.target.checked; applyLights(); });
-document.getElementById('fishBtn').addEventListener('click', () => fishing.active ? fishing.stop() : fishing.start());
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
 document.getElementById('closePanel').addEventListener('click', () => {
   document.getElementById('panel').classList.add('hidden');
@@ -5672,12 +5912,10 @@ renderer.setAnimationLoop(() => {
     dbgInfo.textContent = `facing ${c.dir} (${c.axes}) · yaw ${(_eul.y * 57.2958).toFixed(0)}° · pos ${camera.position.x.toFixed(1)}, ${camera.position.z.toFixed(1)}`;
   }
   const t = performance.now() * 0.001;
-  // flame flicker
-  const f = 1 + Math.sin(t * 11) * 0.12 + Math.sin(t * 23 + 1.7) * 0.08;
-  flameOuter.scale.set(1, f, 1);
-  flameInner.scale.set(1, f * 1.05, 1);
+  campfire.update(t, dt, isNight);            // flames, embers, sparks, smoke
   fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15);
   pond.update(t, dt);                         // koi swim, ripples drift
+  treeWind.value = t;                         // foliage sway
   // slow cloud drift
   for (const c of clouds) { c.position.x += 0.004; if (c.position.x > 160) c.position.x = -160; }
   skyGroup.position.copy(camera.position); // keep the sky centred on the viewer (never clipped by camera.far)

@@ -514,6 +514,12 @@ gen = (MARK_A + " — written by build_combos.py from block10_mock.html, block09
                                                ("makeBlock09", gable_tent("block09_mock.html")),
                                                ("makeBlock05", block05()), ("makeSofa", sofa())])
        + JOINT_CLOTH_FN + DOCK_CLOTH_FN)
+# index.html only: mesh screens cast a SOLID sun shadow. The checkerboard-discard depth material (≈ 50 % sun through
+# a screen) relies on tiny shadow texels; under the campsite's ±42 m shadow map (≈ 2 cm texels) it aliased into jagged,
+# streaky sun patches on whatever sat behind a screen (the sofa by Block 10's side window, per user).
+CHECKER = "'void main() {\\n  if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 0.5) discard;'"
+assert gen.count(CHECKER) == 3, "screen checkerboard anchor changed"
+gen = gen.replace(CHECKER, "'void main() {' /* GENERATED (index.html): solid screen shadow, no checkerboard */")
 a = idx.index(MARK_A); b = idx.index(MARK_B)
 idx_path.write_text(idx[:a] + gen + idx[b:])
 print("updated index.html model block", gen.count("\n"), "lines")
