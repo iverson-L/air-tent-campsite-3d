@@ -245,7 +245,7 @@ camera.position.set(15, 10, 17);  // whole (enlarged) site incl. the unit across
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 3.5);
-controls.maxPolarAngle = Math.PI * 0.95; // can swing below the orbit centre to look UP (per user); kept above the ground in the loop
+controls.maxPolarAngle = Math.PI * 0.95; // can swing below the orbit centre to look UP (per user); the loop lowers it so the camera stays above the ground
 controls.minDistance = 1.5; // close enough to fly in with WASD
 controls.maxDistance = 45;
 controls.update();
@@ -258,7 +258,13 @@ const GRAVITY = 9.8; // m/s²
 let jumpVy = 0, grounded = true;
 const fpControls = new PointerLockControls(camera, renderer.domElement);
 const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false };
+// a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
+// page loses focus, and ignore WASD while Ctrl/Cmd/Alt is down (macOS drops the keyup of keys released under Cmd).
+function releaseKeys() { for (const k in keys) keys[k] = false; }
+window.addEventListener('blur', releaseKeys);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseKeys(); });
 window.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) { if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys(); return; }
   if (e.code === 'KeyW') keys.w = true;
   if (e.code === 'KeyA') keys.a = true;
   if (e.code === 'KeyS') keys.s = true;
@@ -285,6 +291,7 @@ window.addEventListener('keydown', e => {
   }
 });
 window.addEventListener('keyup', e => {
+  if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys();
   if (e.code === 'KeyW') keys.w = false;
   if (e.code === 'KeyA') keys.a = false;
   if (e.code === 'KeyS') keys.s = false;
@@ -4874,8 +4881,12 @@ renderer.setAnimationLoop(() => {
         }
       }
     }
+    // keep the orbit camera ≥ 0.3 m above the ground by capping how far it may swing UNDER the target (camera y =
+    // target y + r·cos φ). Pushing the camera back up after the update instead shortened r every frame, so dragging
+    // against the ground made the view creep toward the target until it hit something (drift bug, per user).
+    const rr = camera.position.distanceTo(controls.target);
+    controls.maxPolarAngle = Math.min(Math.PI * 0.95, Math.acos(THREE.MathUtils.clamp((0.3 - controls.target.y) / rr, -1, 1)));
     controls.update(); // orbit mode only — while walking it would overwrite our view angle
-    if (camera.position.y < 0.3) { camera.position.y = 0.3; camera.lookAt(controls.target); } // never under the ground
   }
   // debug view-direction readout (compass + axes)
   if (dbgChk.checked) {
