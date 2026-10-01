@@ -4411,46 +4411,125 @@ function buildTable(x, z, rotY = 0) {
   return lanternGlow.material;
 }
 
-// ---------- high-back folding camp chair (per chair.jpg): oak frame + beige canvas ----------
+// ---------- Kermit-style folding camp chair (per chair.jpg): wood-grain aluminium frame, khaki canvas ----------
+// Unfolded 62 (H) × 52 (W) × 43 (D) cm. Two bent U-frames (front legs + floor bar, rear posts + floor bar), a
+// scissor X-brace on each side, seat rails with a curved front bar, a canvas sling seat + back wrapped round the
+// tubes, flat light-wood armrests on black brackets, and an arched carry handle across the post tops.
+// Front of the chair faces +z. Materials are shared by every chair.
+const chairMats = (() => {
+  const c = document.createElement('canvas');      // wood-grain print: streaks run along the tube (TubeGeometry u)
+  c.width = 512; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#b4804a'; ctx.fillRect(0, 0, 512, 64);
+  for (let i = 0; i < 46; i++) {
+    const y0 = Math.random() * 64, amp = 1 + Math.random() * 3, f = 0.01 + Math.random() * 0.02, ph = Math.random() * 6;
+    ctx.strokeStyle = `rgba(${90 + Math.random() * 40 | 0}, ${55 + Math.random() * 25 | 0}, 25, ${0.25 + Math.random() * 0.4})`;
+    ctx.lineWidth = 0.6 + Math.random() * 1.8;
+    ctx.beginPath();
+    for (let x = 0; x <= 512; x += 8) ctx.lineTo(x, y0 + amp * Math.sin(x * f + ph));
+    ctx.stroke();
+  }
+  const grain = new THREE.CanvasTexture(c);
+  grain.colorSpace = THREE.SRGBColorSpace;
+  grain.wrapS = grain.wrapT = THREE.RepeatWrapping;
+  return {
+    frame:  new THREE.MeshStandardMaterial({ map: grain, roughness: 0.55, metalness: 0.15 }),
+    pad:    new THREE.MeshStandardMaterial({ color: 0xd8b68c, roughness: 0.65 }),             // light wood armrests
+    canvas: new THREE.MeshStandardMaterial({ color: 0xcdbc9e, roughness: 0.95, side: THREE.DoubleSide }), // khaki
+    black:  new THREE.MeshStandardMaterial({ color: 0x1e1f21, roughness: 0.5, metalness: 0.3 }), // brackets, joints
+    patch:  new THREE.MeshStandardMaterial({ color: 0x7a4a2e, roughness: 0.8 }),              // plain leather tab
+  };
+})();
+// tube along a polyline whose corners are rounded with radius-ish `bend` (bent aluminium)
+function bentTube(pts, r, mat, bend = 0.04) {
+  const path = new THREE.CurvePath();
+  let prev = pts[0].clone();
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+    const p1 = b.clone().addScaledVector(a.clone().sub(b).normalize(), Math.min(bend, a.distanceTo(b) / 2));
+    const p2 = b.clone().addScaledVector(c.clone().sub(b).normalize(), Math.min(bend, b.distanceTo(c) / 2));
+    path.add(new THREE.LineCurve3(prev, p1));
+    path.add(new THREE.QuadraticBezierCurve3(p1, b.clone(), p2));
+    prev = p2;
+  }
+  path.add(new THREE.LineCurve3(prev, pts[pts.length - 1].clone()));
+  return new THREE.Mesh(new THREE.TubeGeometry(path, Math.max(24, Math.ceil(path.getLength() / 0.02)), r, 10, false), mat);
+}
+// a canvas sling: (u, v) ∈ [0,1]² → point, as a NU × NV grid
+function sling(f, nu, nv, mat) {
+  const geo = new THREE.PlaneGeometry(1, 1, nu, nv), p = geo.attributes.position, v3 = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) { f(p.getX(i) + 0.5, p.getY(i) + 0.5, v3); p.setXYZ(i, v3.x, v3.y, v3.z); }
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
 function buildChair(x, z, rotY) {
+  const M = chairMats, V = (x, y, z) => new THREE.Vector3(x, y, z);
   const g = new THREE.Group();
-  const matWood = new THREE.MeshStandardMaterial({ color: 0x9c7a4f, roughness: 0.7 });
-  const matCanvasC = new THREE.MeshStandardMaterial({ color: 0xcfc3ab, roughness: 0.95, side: THREE.DoubleSide });
+  const X = 0.228, R = 0.011;                       // frame half-width at the tube centres, Ø22 mm tube
+  const FRONT_TOP = 0.445, POST_TOP = 0.60;         // front legs end under the armrests; rear posts carry the handle
+  const frontZ = y => 0.195 - 0.03 * (y / FRONT_TOP);   // front legs rake back slightly going up
+  const postZ = y => -0.16 - 0.055 * (y / POST_TOP);    // rear posts recline
+  const SEAT_F = 0.31, SEAT_B = 0.285;              // seat rail height at the front / back
 
-  // canvas seat + reclined back panel (front of the chair faces +z)
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.025, 0.42), matCanvasC);
-  seat.position.set(0, 0.45, 0.01); g.add(seat);
-  // back panel centred on the rear posts so it intersects them (no gap)
-  const back = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.44, 0.02), matCanvasC);
-  back.position.set(0, 0.73, -0.258); back.rotation.x = -0.12; g.add(back);
-
-  // side frames: tall rear posts + front legs splaying forward + lower X brace
-  for (const sx of [-0.24, 0.24]) {
-    g.add(tube(new THREE.Vector3(sx, 0.02, -0.30), new THREE.Vector3(sx, 0.95, -0.26), 0.018, matWood)); // rear post
-    g.add(tube(new THREE.Vector3(sx, 0.45, 0.21), new THREE.Vector3(sx, 0.02, 0.30), 0.018, matWood));   // front leg
-    // X brace: both ends land ON the tubes (front leg low → rear post at seat height)
-    g.add(tube(new THREE.Vector3(sx, 0.06, 0.29), new THREE.Vector3(sx, 0.42, -0.28), 0.014, matWood));
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.06), matMetal);
-    foot.position.set(sx, 0.015, 0.30); g.add(foot);
-    const rfoot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.06), matMetal);
-    rfoot.position.set(sx, 0.015, -0.30); g.add(rfoot);
+  // front U-frame (legs + floor bar) and rear U-frame (posts + floor bar), tube centre 1 mm off the ground
+  g.add(bentTube([V(-X, FRONT_TOP, frontZ(FRONT_TOP)), V(-X, R, frontZ(0)), V(X, R, frontZ(0)), V(X, FRONT_TOP, frontZ(FRONT_TOP))], R, M.frame, 0.05));
+  g.add(bentTube([V(-X, POST_TOP, postZ(POST_TOP)), V(-X, R, postZ(0)), V(X, R, postZ(0)), V(X, POST_TOP, postZ(POST_TOP))], R, M.frame, 0.05));
+  // arched carry handle across the post tops (→ 62 cm overall); the posts poke 1.5 cm above it, capped
+  const handle = [];
+  for (let k = 0; k <= 24; k++) { const t = k / 24, xx = -X + 2 * X * t;
+    handle.push(V(xx, 0.585 + 0.024 * Math.sin(Math.PI * t), postZ(0.585) - 0.006 * Math.sin(Math.PI * t))); }
+  g.add(bentTube(handle, R, M.frame, 0.01));
+  for (const sx of [-X, X]) {
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.05, R * 1.05, 0.012, 10), M.black);
+    cap.position.set(sx, POST_TOP + 0.004, postZ(POST_TOP)); cap.rotation.x = -Math.atan(0.055 / POST_TOP);
+    g.add(cap);
   }
-  // foot bars connecting the legs (the U-rails in the photo)
-  g.add(tube(new THREE.Vector3(-0.24, 0.04, 0.30), new THREE.Vector3(0.24, 0.04, 0.30), 0.016, matWood));
-  g.add(tube(new THREE.Vector3(-0.24, 0.04, -0.30), new THREE.Vector3(0.24, 0.04, -0.30), 0.016, matWood));
 
-  // arched top rail (handle) spanning the rear posts — flattened torus arc
-  const arch = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.018, 8, 24, Math.PI), matWood);
-  arch.scale.y = 0.38; // shallow rise (~10 cm) like the photo, total height ≈ 1.05 m
-  arch.position.set(0, 0.95, -0.26); g.add(arch);
-
-  // armrests: wood pads straddling the side posts + black brackets joining pad → seat
-  for (const sx of [-0.24, 0.24]) {
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.025, 0.30), matWood);
-    pad.position.set(sx, 0.64, 0.02); g.add(pad);
-    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.19, 0.04), matMetal);
-    bracket.position.set(sx, 0.545, 0.10); g.add(bracket);
+  for (const sx of [-X, X]) {
+    // seat rail: front-leg joint → rear post, black moulded joint block at the front
+    g.add(bentTube([V(sx, SEAT_F, frontZ(SEAT_F) + 0.02), V(sx, SEAT_B, postZ(SEAT_B))], R, M.frame));
+    const joint = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.032, 0.04, 2, 0.006), M.black);
+    joint.position.set(sx, SEAT_F, frontZ(SEAT_F) + 0.012); g.add(joint);
+    // scissor X-brace between the front leg and the rear post, pivot bolt at the crossing
+    const a0 = V(sx, 0.06, frontZ(0.06)), a1 = V(sx, 0.25, postZ(0.25));
+    const b0 = V(sx, 0.06, postZ(0.06)), b1 = V(sx, 0.25, frontZ(0.25));
+    g.add(bentTube([a0, a1], R * 0.85, M.frame), bentTube([b0, b1], R * 0.85, M.frame));
+    const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 2 * R + 0.012, 10), M.black);
+    bolt.rotation.z = Math.PI / 2; bolt.position.copy(a0).lerp(a1, 0.5); bolt.position.z = (a0.z + a1.z + b0.z + b1.z) / 4;
+    g.add(bolt);
+    // armrest: flat light-wood pad on top of the front leg, its back end fixed to the rear post, black L-brackets
+    const zr = postZ(0.455) - 0.012, zf = frontZ(FRONT_TOP) + 0.04, sxo = sx + Math.sign(sx) * 0.006;
+    const pad = new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.02, zf - zr, 2, 0.006), M.pad);
+    pad.position.set(sxo, 0.457, (zf + zr) / 2); g.add(pad);
+    for (const [zz, h] of [[frontZ(FRONT_TOP) - 0.035, 0.055], [postZ(0.43) + 0.03, 0.04]]) {
+      const br = new THREE.Mesh(new THREE.BoxGeometry(0.004, h, 0.07), M.black); // plate on the tube's inner side
+      br.position.set(sx - Math.sign(sx) * (R + 0.002), 0.447 - h / 2, zz); g.add(br);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.004, 0.07), M.black);
+      top.position.set(sx - Math.sign(sx) * 0.002, 0.446, zz); g.add(top);
+    }
   }
+  // curved front bar under the seat's front edge (dips 5 cm in the middle, as in the photo) + straight back bar
+  const fb = [];
+  for (let k = 0; k <= 20; k++) { const t = k / 20;
+    fb.push(V(-X + 2 * X * t, SEAT_F - 0.012 - 0.05 * Math.sin(Math.PI * t), frontZ(SEAT_F) + 0.012 + 0.012 * Math.sin(Math.PI * t))); }
+  g.add(bentTube(fb, R * 0.9, M.frame, 0.01));
+  g.add(bentTube([V(-X, 0.255, postZ(0.255)), V(X, 0.255, postZ(0.255))], R * 0.9, M.frame));
+
+  // canvas: seat sling between the seat rails (sags 2.5 cm), back sling between the posts (sags 2 cm backwards);
+  // both wrap round their tubes as sleeves
+  const zF = frontZ(SEAT_F) + 0.01, zB = postZ(SEAT_B) + 0.012;
+  g.add(sling((u, s, o) => { const v = 1 - s, xx = -X + 2 * X * u, w = 1 - (xx / X) ** 2; // v: back → front (faces up)
+    o.set(xx, SEAT_B + (SEAT_F - SEAT_B) * v - 0.025 * w * Math.sin(Math.PI * (0.15 + 0.85 * v)) + 0.008, zB + (zF - zB) * v); }, 14, 10, M.canvas));
+  const BK0 = 0.30, BK1 = 0.565;
+  g.add(sling((u, v, o) => { const xx = -X + 2 * X * u, w = 1 - (xx / X) ** 2, y = BK0 + (BK1 - BK0) * v;
+    o.set(xx, y, postZ(y) - 0.02 * w * Math.sin(Math.PI * (0.1 + 0.9 * v))); }, 14, 10, M.canvas));
+  for (const sx of [-X, X]) {
+    g.add(bentTube([V(sx, SEAT_F, zF - 0.01), V(sx, SEAT_B, zB)], R + 0.004, M.canvas));        // seat sleeve
+    g.add(bentTube([V(sx, BK0, postZ(BK0)), V(sx, BK1, postZ(BK1))], R + 0.004, M.canvas));      // back sleeve
+  }
+  const patch = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.035, 0.003), M.patch);           // plain tab, no logo
+  patch.position.set(0.06, 0.53, postZ(0.53) - 0.004); patch.rotation.x = -Math.atan(0.055 / POST_TOP);
+  g.add(patch);
 
   g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
   g.position.set(x, 0, z); g.rotation.y = rotY;
