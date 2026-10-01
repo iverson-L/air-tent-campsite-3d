@@ -88,6 +88,8 @@
   /* walk-mode keyboard hint bar */
   #walkHint { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20; display: none;
     background: rgba(20,22,26,.72); color: #f3f4f6; font-size: 12px; padding: 8px 14px; border-radius: 999px; white-space: nowrap; pointer-events: none; }
+  .keys { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.8; }
+  .keys kbd { font: 600 10.5px/1 ui-monospace, monospace; color: var(--muted); background: #f1f3f6; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; }
   #walkHint kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.16); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
 
   .dim-label { background: rgba(20,20,20,.78); color: #fff; padding: 2px 8px; border-radius: 5px; font-size: 12px; white-space: nowrap; pointer-events: none; }
@@ -154,7 +156,7 @@
     <button id="closePanel" class="icon-btn" title="Close panel">×</button>
   </header>
 
-  <details open><summary>Layout</summary>
+  <details><summary>Layout</summary>
     <div class="field"><span>Gap between tents</span><span class="chip" id="gapVal">3.40 m</span></div>
     <input type="range" id="gapSlider" min="3.3" max="3.8" step="0.05" value="3.4" />
     <div id="coverage" class="status"></div>
@@ -170,13 +172,14 @@
     <button id="walkBtn" class="btn">🚶 First person mode</button>
     <label class="toggle"><span>On-screen controls <kbd>B</kbd></span><input type="checkbox" id="osControlsChk" checked /></label>
     <label class="toggle"><span>Debug view direction <kbd>V</kbd></span><input type="checkbox" id="debugDirChk" /></label>
+    <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move the view · <kbd>Shift</kbd> slow · drag to orbit, scroll to zoom</div>
   </details>
 
   <details><summary>About &amp; specs</summary>
     <div id="specs">
       <b>Block 10</b> · 360 × 280 cm · ridge 245 cm · walls 170 cm (11° inward lean) · mesh double-door entrance, 2 side windows, chimney cover, interior air frame<br/>
-      <b>Block 05</b> · 240 × 190 cm (+ 30 cm porch canopy) · 140 cm at the door → 80 cm back wall (10.5° lean) · docked on the right Block 10's side wall<br/>
-      <b>Furniture</b> · left Block 10: 200 × 180 air bed · right Block 10: Spark Air sofa · Block 05: 150 × 180 air bed<br/>
+      <b>Block 05</b> · 240 × 190 cm (+ 30 cm porch canopy) · 140 cm at the door → 80 cm back wall (10.5° lean) · joined to the right Block 10's side by a 15 cm connection cloth<br/>
+      <b>Furniture</b> · left Block 10: 200 × 180 air bed · right Block 10: Spark Air sofa · Block 05: 150 × 180 air bed · egg-roll tables 122 × 60 × 43 cm · folding chairs 62 × 52 × 43 cm<br/>
       <b>Flysheet</b> · 7 × 6 m tarp · ridge poles 3.05 m · eaves 2.45 m. At a 3.3–3.8 m gap the tarp shades the central gap; roof coverage is minimal by design.
     </div>
   </details>
@@ -243,7 +246,7 @@ camera.position.set(15, 10, 17);  // whole (enlarged) site incl. the unit across
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 3.5);
 controls.maxPolarAngle = Math.PI * 0.49;
-controls.minDistance = 3;
+controls.minDistance = 1.5; // close enough to fly in with WASD
 controls.maxDistance = 45;
 controls.update();
 
@@ -4358,53 +4361,117 @@ scene.add(fireGroup);
 
 // ---------- camp furniture + gear ----------
 const matMetal = new THREE.MeshStandardMaterial({ color: 0x2e2e30, roughness: 0.6, metalness: 0.4 });
-// helper: tube between two points (folding X-legs)
-function tube(p1, p2, r, mat) {
-  const d = new THREE.Vector3().subVectors(p2, p1);
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), mat);
-  m.position.copy(p1).addScaledVector(d, 0.5);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+// ---------- egg-roll camping table (per table.png): 122 × 60 × 43 cm ----------
+// Walnut wood-grain aluminium top: ONE roll of 24 slats running ACROSS the width (per the photo / user), in a black rim; black side rails with
+// oblong slots; three X-leg frames (both ends + centre) across the width, wood-grain legs with black hinge plates
+// and rubber feet. The long axis is x.
+const tableMats = (() => {
+  // streaks run along the texture's V axis: on these box faces that is the slats' / legs' long axis (drawn along U
+  // the grain ran ACROSS the slats — per user)
+  const grain = (base, dark, n, w = 64, h = 512) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = base; ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < n; i++) {
+      const x0 = Math.random() * w, amp = 0.5 + Math.random() * 2.5, f = 0.004 + Math.random() * 0.012, ph = Math.random() * 6;
+      ctx.strokeStyle = `rgba(${dark}, ${0.25 + Math.random() * 0.45})`;
+      ctx.lineWidth = 0.5 + Math.random() * 1.6;
+      ctx.beginPath();
+      for (let y = 0; y <= h; y += 8) ctx.lineTo(x0 + amp * Math.sin(y * f + ph), y);
+      ctx.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  // side rail alpha: black aluminium with a row of oblong see-through slots (alphaMap reads green: black = hole)
+  const slots = document.createElement('canvas'); slots.width = 512; slots.height = 32;
+  const sctx = slots.getContext('2d');
+  sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, 512, 32);
+  sctx.fillStyle = '#000';
+  for (let i = 0; i < 9; i++) { const x = 18 + i * 55; sctx.beginPath(); sctx.roundRect(x, 12, 40, 9, 4.5); sctx.fill(); }
+  const slotTex = new THREE.CanvasTexture(slots);
+  return {
+    top:   new THREE.MeshStandardMaterial({ map: grain('#6b4129', '45, 24, 12', 60), roughness: 0.55, metalness: 0.1 }),
+    leg:   new THREE.MeshStandardMaterial({ map: grain('#6e4630', '40, 22, 12', 40), roughness: 0.5, metalness: 0.15 }),
+    black: new THREE.MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.5, metalness: 0.4 }),
+    rail:  new THREE.MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.5, metalness: 0.4, alphaMap: slotTex, alphaTest: 0.5, side: THREE.DoubleSide }),
+    railDepth: new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, alphaMap: slotTex, alphaTest: 0.5 }), // slots let light through
+    rubber: new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.9 }),
+  };
+})();
+// box from p1 to p2 (its long axis), w along world x, d across
+function bar(p1, p2, w, d, mat) {
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, dir.length(), d), mat);
+  m.position.copy(p1).addScaledVector(dir, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
   return m;
 }
-
-// ---------- folding camp table (per table.png): slatted wood top on black frame, X-legs ----------
 function buildTable(x, z, rotY = 0) {
+  const T = tableMats, V = (x, y, z) => new THREE.Vector3(x, y, z);
   const g = new THREE.Group();
-  const matWoodTop = new THREE.MeshStandardMaterial({ color: 0x6e4a2f, roughness: 0.75 });
-  // black base plate + wood slats; top surface stays at 0.53 m — table is 140 × 50 cm
-  // slim profile: thin base plate, wider slats with narrow gaps
-  const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.012, 0.50), matMetal);
-  base.position.y = 0.508; g.add(base);
-  // slats run front-to-back (vertical in plan view), edge to edge inside the rim
-  const nSlats = 52, pitch = 1.34 / (nSlats - 1);
-  for (let i = 0; i < nSlats; i++) {
-    const slat = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.016, 0.44), matWoodTop);
-    slat.position.set(-0.67 + i * pitch, 0.522, 0);
+  const L = 1.22, W = 0.60, H = 0.43;                // overall length × width × height
+  const hl = L / 2, hw = W / 2, RIM = 0.008, SLAT_T = 0.012, RAIL_H = 0.04;
+
+  // top: one egg roll of 24 slats (5 cm) running across the width, 2 mm gaps, in a black rim. Each slat is built
+  // long in x (the axis its grain texture runs along) and turned 90° so slat + grain run across the table.
+  const N = 24, innerL = L - 2 * RIM, innerW = W - 2 * RIM, pitch = innerL / N;
+  for (let i = 0; i < N; i++) {
+    const slat = new THREE.Mesh(new RoundedBoxGeometry(innerW, SLAT_T, pitch - 0.002, 2, 0.002), T.top);
+    slat.rotation.y = Math.PI / 2;
+    slat.position.set(-innerL / 2 + pitch * (i + 0.5), H - SLAT_T / 2, 0);
     g.add(slat);
   }
-  // black rim frame around the top edge
-  for (const [w, d, px, pz] of [[1.4, 0.03, 0, -0.235], [1.4, 0.03, 0, 0.235], [0.03, 0.50, -0.685, 0], [0.03, 0.50, 0.685, 0]]) {
-    const rim = new THREE.Mesh(new THREE.BoxGeometry(w, 0.028, d), matMetal);
-    rim.position.set(px, 0.516, pz); g.add(rim);
+  for (const [w, d, px, pz] of [[L, RIM, 0, hw - RIM / 2], [L, RIM, 0, -hw + RIM / 2], [RIM, W, hl - RIM / 2, 0], [RIM, W, -hl + RIM / 2, 0]]) {
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(w, SLAT_T + 0.002, d), T.black);
+    rim.position.set(px, H - (SLAT_T + 0.002) / 2 + 0.001, pz); g.add(rim);
   }
-  // three X folding-leg assemblies (two ends + centre) with pivot bolts and feet
-  // tube tops reach INTO the base plate (bottom at y=0.502) so nothing floats
-  for (const lx of [-0.60, 0, 0.60]) {
-    g.add(tube(new THREE.Vector3(lx, 0.02, -0.19), new THREE.Vector3(lx, 0.51, 0.16), 0.018, matMetal));
-    g.add(tube(new THREE.Vector3(lx, 0.02, 0.19), new THREE.Vector3(lx, 0.51, -0.16), 0.018, matMetal));
-    const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.07, 8), matMetal);
-    bolt.rotation.z = Math.PI / 2; bolt.position.set(lx, 0.265, 0); g.add(bolt);
-    for (const fz of [-0.19, 0.19]) {
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.07), matMetal);
-      foot.position.set(lx, 0.015, fz); g.add(foot);
+  // slotted side rails hanging under the long edges, plain end rails, two black stringers carrying the slats
+  for (const sz of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.PlaneGeometry(L - 0.01, RAIL_H), T.rail);
+    rail.position.set(0, H - SLAT_T - RAIL_H / 2, sz * (hw - 0.003));
+    rail.customDepthMaterial = T.railDepth;
+    g.add(rail);
+    const lip = new THREE.Mesh(new THREE.BoxGeometry(L - 0.01, 0.003, 0.02), T.black); // rail's bottom flange
+    lip.position.set(0, H - SLAT_T - RAIL_H, sz * (hw - 0.012)); g.add(lip);
+    const str = new THREE.Mesh(new THREE.BoxGeometry(L - 0.04, 0.012, 0.016), T.black);
+    str.position.set(0, H - SLAT_T - 0.006, sz * 0.14); g.add(str);
+  }
+  for (const sx of [-1, 1]) {
+    const end = new THREE.Mesh(new THREE.BoxGeometry(0.003, RAIL_H * 0.7, W - 0.01), T.black);
+    end.position.set(sx * (hl - 0.003), H - SLAT_T - RAIL_H * 0.35, 0); g.add(end);
+  }
+
+  // three X-leg frames across the width: each leg runs from a black hinge block under one side rail to a rubber
+  // foot under the other side; the pair is offset ±1.3 cm in x so they pass each other, pinned at the crossing
+  const TOPY = H - SLAT_T - RAIL_H + 0.004, ZT = hw - 0.05, ZF = hw - 0.02, LW = 0.022, LD = 0.03;
+  for (const lx of [-(hl - 0.09), 0, hl - 0.09]) {
+    for (const [dx, s] of [[-0.013, 1], [0.013, -1]]) {
+      const top = V(lx + dx, TOPY, s * ZT), foot = V(lx + dx, 0.03, -s * ZF);
+      g.add(bar(top, foot, LW, LD, T.leg));
+      const hinge = new THREE.Mesh(new THREE.BoxGeometry(LW + 0.008, 0.04, 0.045), T.black);
+      hinge.position.set(lx + dx, TOPY + 0.004, s * ZT); g.add(hinge);
+      const cap = bar(V(foot.x, 0.0, foot.z - s * 0.004), V(foot.x, 0.045, foot.z + s * 0.004), LW + 0.006, LD + 0.008, T.rubber);
+      g.add(cap);
     }
+    // black hinge plates (diamond) on both outer faces at the crossing + pivot
+    const yc = 0.03 + (TOPY - 0.03) * (ZF / (ZT + ZF));
+    for (const sx of [-1, 1]) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.06, 0.06), T.black);
+      plate.rotation.x = Math.PI / 4;
+      plate.position.set(lx + sx * (0.013 + LW / 2 + 0.002), yc, 0); g.add(plate);
+    }
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 2 * (0.013 + LW / 2) + 0.012, 8), T.black);
+    pin.rotation.z = Math.PI / 2; pin.position.set(lx, yc, 0); g.add(pin);
   }
+
   // lantern on the table (glows at night)
   const lanternBody = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.12, 8), matMetal);
-  lanternBody.position.set(0.42, 0.59, 0); g.add(lanternBody);
+  lanternBody.position.set(0.38, H + 0.06, 0); g.add(lanternBody);
   const lanternGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.07, 8),
     new THREE.MeshStandardMaterial({ color: 0x3a3a2a, emissive: 0xffc46b, emissiveIntensity: 0 }));
-  lanternGlow.position.set(0.42, 0.59, 0); g.add(lanternGlow);
+  lanternGlow.position.set(0.38, H + 0.06, 0); g.add(lanternGlow);
   g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
   g.position.set(x, 0, z); g.rotation.y = rotY;
   scene.add(g);
@@ -4743,6 +4810,7 @@ renderer.compile(scene, camera); // warm up every material now so the first fram
 
 const clock = new THREE.Clock();
 let firstFrame = true;
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3(); // orbit-view WASD temps
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
@@ -4780,6 +4848,27 @@ renderer.setAnimationLoop(() => {
     const r = Math.hypot(camera.position.x, camera.position.z);
     if (r > 40) { camera.position.x *= 40 / r; camera.position.z *= 40 / r; } // stay in the scene
   } else {
+    // orbit view (per user): WASD flies the view — camera and orbit target move together; W/S along the direction the
+    // camera FACES (so looking down, W descends toward what you look at), A/D strafe level. Faster when zoomed out;
+    // Shift = slow. The camera stays 0.4 m above the ground and the target on/above it, within the scene.
+    const f = (keys.w ? 1 : 0) - (keys.s ? 1 : 0), s = (keys.d ? 1 : 0) - (keys.a ? 1 : 0), len = Math.hypot(f, s);
+    if (len > 0) {
+      camera.getWorldDirection(_fwd);
+      _right.crossVectors(_fwd, camera.up).normalize();
+      const dist = (keys.shift ? 0.35 : 1) * Math.max(2.5, 0.6 * camera.position.distanceTo(controls.target)) * dt / len;
+      _move.copy(_fwd).multiplyScalar(f * dist).addScaledVector(_right, s * dist);
+      _move.y = Math.max(_move.y, 0.4 - camera.position.y); // glide just above the ground, never through it
+      if (Math.hypot(controls.target.x + _move.x, controls.target.z + _move.z) < 38) {
+        camera.position.add(_move); controls.target.add(_move);
+        // the orbit centre can't sink below the ground (clamping the MOVE by it stopped all descent — bug): re-seat
+        // it where the view ray meets the ground, so the view direction is unchanged
+        if (controls.target.y < 0) {
+          const t = _fwd.y < -0.05 ? -camera.position.y / _fwd.y : controls.minDistance;
+          controls.target.copy(camera.position).addScaledVector(_fwd, Math.max(t, controls.minDistance));
+          controls.target.y = Math.max(controls.target.y, 0);
+        }
+      }
+    }
     controls.update(); // orbit mode only — while walking it would overwrite our view angle
   }
   // debug view-direction readout (compass + axes)
