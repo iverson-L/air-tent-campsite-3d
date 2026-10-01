@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Block 05 Mock — single-slope tent sandbox</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e8eaed; font-family: system-ui, sans-serif; }
+  #app { width: 100%; height: 100%; }
+  #hint { position: absolute; top: 12px; left: 12px; z-index: 10; background: rgba(255,255,255,.85);
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #444; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hint">Block 05 mock — single-slope tent (190 × 240 cm, 140 → 80 cm). Orbit: drag · zoom: wheel. Edits here do NOT affect index.html.</div>
+<div id="app"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- minimal scene (no background / ground — just the tent) — same rig as block10_mock.html ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe8eaed); // flat neutral — no environment
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(3.6, 1.6, 3.4); // front-left 3/4 view like 05.jpg: side window face left, door face right
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0.2, 0.7, 0);
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x8f928a, 1.45));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.25);
+sun.position.set(8, 12, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -4; sun.shadow.camera.right = 4;
+sun.shadow.camera.top = 4; sun.shadow.camera.bottom = -4;
+// Tight shadow depth range around the scene (sun is 15.6 m from the origin). With the default 0.5–500 m range
+// the depth bias (normalised) was ~20 cm in world units, so anything within ~20 cm of a receiver stopped
+// casting: light leaked onto the ground under the wall bases ("light passes through the wall"). Now the
+// bias is ~3 mm.
+sun.shadow.camera.near = 8; sun.shadow.camera.far = 24;
+sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.01; // still no acne on the bumped fabric
+scene.add(sun);
+
+// ---------- Block 05 dimensions (per block05.png) ----------
+// x: back wall (−) → front door wall (+); y up; z along the door face. Origin = footprint centre.
+const DEPTH = 1.9;      // front → back                      [190 cm]
+const WIDTH = 2.4;      // along the door face               [240 cm]
+const H_FRONT = 1.40;   // roof height at the front (door) wall [140 cm]
+const H_BACK = 0.80;    // back wall height                  [80 cm]
+const VISOR = 0.25;     // porch canopy: roof runs past the door wall, carried by the side walls' leaning
+                        // front edges + two black poles (per 05.jpg)
+const XB = -DEPTH / 2, XF = DEPTH / 2, XT = XF + VISOR, hd = WIDTH / 2;
+// back eave and the rake/back corners: 7 cm true radii (were 12 cm like Block 10 — read as too puffy on this
+// smaller tent, per user; the YAMATO 9+10+5 photo shows crisp edges)
+const EAVE_RADIUS = 0.07, RAKE_R = 0.07;
+const FACING_D = 0.012, PANEL_TUCK = 0.004;
+const WIN_RB = 0.16; // bottom corner radius of the big back window + the entrance (same as Block 09, per user); small side windows keep plain WIN_R corners
+const STRAP_GAP = 1.6; // rad: opening in a roll's strap ring where the roll rests on a zero-thickness wall // flat side/door panel thickness; side panels tuck under the rounded rim
+const bezTangent = (r, th) => r * Math.sin(th) / Math.cos(th) ** 2;
+// BACK WALL LEAN (per user — the real 05's big-window wall is a slope): measured from block05.png's own
+// dimension axes (80/140 cm verticals, 190 cm base): the back edge rises 82 cm while moving 15.2 cm toward the
+// door → atan(15.2 / 82) ≈ 10.5° from vertical, top leaning IN. The foot stays on the 190 cm footprint.
+const BACK_LEAN_DEG = 10.5;
+const BACK_LEAN_RAD = BACK_LEAN_DEG * Math.PI / 180, BACK_LEAN = Math.tan(BACK_LEAN_RAD); // x inset per metre of height
+const XE0 = XB + H_BACK * BACK_LEAN;                                // back eave vertex x (≈ 15 cm in from the foot)
+const WD = new THREE.Vector2(BACK_LEAN, 1).normalize();             // back wall direction, foot → eave
+const WN = new THREE.Vector2(-WD.y, WD.x);                          // back wall outward normal (−x, slightly up)
+const RD = new THREE.Vector2(XF - XE0, H_FRONT - H_BACK).normalize(); // roof direction: back eave → front (rising)
+const RN = new THREE.Vector2(-RD.y, RD.x);                          // roof outward normal
+const EAVE_HALF_TURN = Math.acos(WD.dot(RD)) / 2;                   // back wall → roof turn, halved
+const roofY = x => H_BACK + (x - XE0) * (H_FRONT - H_BACK) / (XF - XE0);
+const backX = y => XB + y * BACK_LEAN;                              // back wall surface x at height y
+// rounded rim at the side ends: extra inset at distance e from the end (quarter circle, 0 → RAKE_R)
+const curlInset = z => { const e = hd - Math.abs(z); return e >= RAKE_R ? 0 : RAKE_R - Math.sqrt(RAKE_R ** 2 - (RAKE_R - e) ** 2); };
+
+// ---------- procedural TC cotton texture (near-white base so tinting works) ----------
+function makeCottonTexture(size = 512) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#eceae6'; // near-white base — material colour tints it
+  ctx.fillRect(0, 0, size, size);
+  // tight plain-weave threads (very low contrast — cotton reads as smooth)
+  for (let y = 0; y < size; y += 2) {
+    for (let x = 0; x < size; x += 2) {
+      const on = (((x / 2) + (y / 2)) % 2) === 0;
+      ctx.fillStyle = on ? 'rgba(255,255,255,0.30)' : 'rgba(140,138,132,0.16)';
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  // faint ripstop reinforcement grid (~3.5 cm on a 0.5 m tile)
+  ctx.strokeStyle = 'rgba(120,118,112,0.14)';
+  ctx.lineWidth = 1;
+  for (let p = 0; p <= size; p += 36) {
+    ctx.beginPath(); ctx.moveTo(p + 0.5, 0); ctx.lineTo(p + 0.5, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p + 0.5); ctx.lineTo(size, p + 0.5); ctx.stroke();
+  }
+  // soft fibre noise (sparse — cotton is clean)
+  for (let i = 0; i < 1600; i++) {
+    const v = 200 + Math.floor(Math.random() * 55);
+    ctx.fillStyle = `rgba(${v},${v},${v - 4},0.12)`;
+    ctx.fillRect(Math.random() * size, Math.random() * size, 1, 1);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+// extrude UVs are in metres → repeat 2 = 0.5 m tile (cotton weave scale)
+const tentFabricTex = makeCottonTexture();
+tentFabricTex.repeat.set(2, 2);
+
+// palette: dark grey TC fabric (per user — the warm cast in image3.png is the evening light, not
+// the fabric). EVERY exterior fabric panel — roof, walls, gable panels, flaps, skirt — shares ONE
+// material instance so they are the same colour by construction (per user); only lighting varies
+// them. The cotton texture doubles as a bump map so the weave catches light instead of reading as
+// flat plastic. Zips and straps get a separate darker trim so they stay visible.
+const fabric = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.93, side: THREE.DoubleSide,
+  map: tentFabricTex, bumpMap: tentFabricTex, bumpScale: 0.6, ...extra });
+const matCanvas    = fabric(0x55585d); // the tent fabric — used for every exterior panel
+const matRoof      = matCanvas;        // alias kept for readability at the roof call site — SAME instance
+const matTrim      = new THREE.MeshStandardMaterial({ color: 0x2c2e32, roughness: 0.8 }); // zip tape, webbing straps
+// bathtub floor: 500D PVC tarpaulin (per user) — light grey, smooth coated sheet with a soft satin
+// sheen (clearcoat), not the matte woven look of the tent fabric
+const matTentFloor = new THREE.MeshPhysicalMaterial({ color: 0xb4b7bb, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.45, side: THREE.DoubleSide });
+const BAT_H = 0.10; // bathtub side-wall height (10 cm, per user)
+// per image3.png: the gable door and the long-side windows are a FINE MESH SCREEN you can see through
+// alphaMap uses the GREEN channel: gaps nearly open, threads semi-opaque → reads as insect mesh.
+// Real tents use the SAME fine screen on every face (per image3) — the side just looks darker
+// in photos because of sun angle. So both get a screen texture; the side's is denser/darker.
+function makeScreenTexture(size = 512, gapG = 26, threadG = 190) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = `rgb(0,${gapG},0)`;     // gap opacity
+  ctx.fillRect(0, 0, size, size);
+  const pitch = size / 21;                 // 21 cells/tile ≈ +30% density (was 16) — seamless wrap
+  ctx.strokeStyle = `rgb(0,${threadG},0)`; // thread opacity
+  ctx.lineWidth = 2;
+  for (let p = 0; p <= size; p += pitch) {
+    ctx.beginPath(); ctx.moveTo(p + 0.5, 0); ctx.lineTo(p + 0.5, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p + 0.5); ctx.lineTo(size, p + 0.5); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2); // ShapeGeometry UVs are in metres → 2 tiles/m
+  return tex;
+}
+const matGableMesh = new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.95, transparent: true, alphaMap: makeScreenTexture(512, 26, 190), side: THREE.DoubleSide, depthWrite: false }); // bright fine screen — interior clearly visible
+// Fine mesh blocks roughly half of direct sun. three.js shadows are all-or-nothing, so screens cast
+// through this checkerboard depth material: every other shadow-map texel is discarded and the PCF
+// soft-shadow filter averages that to a ~50% shadow — otherwise sun pours straight through the
+// screens and lights the inside of the back wall as if the fabric were transparent.
+const matScreenShadow = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+matScreenShadow.onBeforeCompile = sh => {
+  sh.fragmentShader = sh.fragmentShader.replace('void main() {',
+    'void main() {\n  if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 0.5) discard;');
+};
+
+// ---------- shape helpers (copied from index.html) ----------
+// rounded rectangle with DIFFERENT top / bottom corner radii (Block 09 windows: rounder bottom corners)
+function roundedRectShape2(w, h, rTop, rBot) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  s.moveTo(x + rBot, y);
+  s.lineTo(x + w - rBot, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + rBot);
+  s.lineTo(x + w, y + h - rTop);
+  s.quadraticCurveTo(x + w, y + h, x + w - rTop, y + h);
+  s.lineTo(x + rTop, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - rTop);
+  s.lineTo(x, y + rBot);
+  s.quadraticCurveTo(x, y, x + rBot, y);
+  return s;
+}
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+// Open arch path: the tent silhouette (leaning walls) offset INWARD — the roof lines by `b` and the
+// walls by `bSide` (default b), each along its own normal, so borders are true perpendicular widths.
+// Runs from the right foot (y = yFoot, on the offset wall line) over the ridge to the left foot.
+// Used for the rounded body sections, gable panels, the door opening and the rolled door flap, so all
+// stay concentric with the shell. `minR` (true radius) keeps each fillet at least that round — a tube
+// swept along a path must not bend tighter than its own radius or it pinches at the tight ridge.
+function archPts(b, yFoot = 0, seg = 12, minR = 0, bSide = b) {
+  const V = (x, y) => new THREE.Vector2(x, y);
+  const wd = V(EAVE_X - W / 2, WALL_H).normalize();      // right wall direction, foot → eave
+  const wn = V(wd.y, -wd.x);                             // its outward normal
+  const rd = V(-EAVE_X, RIDGE_H - WALL_H).normalize();   // right roof direction, eave → ridge
+  const rn = V(rd.y, -rd.x);                             // its outward normal
+  const cw = wn.x * (W / 2) - bSide;                     // offset wall line: wn·p = cw
+  const cr = rn.x * EAVE_X + rn.y * WALL_H - b;          // offset roof line: rn·p = cr
+  const det = wn.x * rn.y - wn.y * rn.x;
+  const E = V((cw * rn.y - wn.y * cr) / det, (wn.x * cr - cw * rn.x) / det); // offset eave vertex
+  const R = V(0, cr / rn.y);                                                  // offset ridge vertex
+  const tE = Math.max(bezTangent(Math.max(EAVE_RADIUS - b, minR), EAVE_HALF_TURN), 0.02);
+  const tR = Math.max(bezTangent(Math.max(RIDGE_RADIUS - b, minR), ROOF_PITCH), 0.02);
+  const eS = E.clone().addScaledVector(wd, -tE), eX = E.clone().addScaledVector(rd, tE);
+  const rS = R.clone().addScaledVector(rd, -tR), rX = V(-rS.x, rS.y);
+  const bez = (p0, c, p1, out) => { for (let k = 1; k <= seg; k++) { const t = k / seg, u = 1 - t;
+    out.push(V(u*u*p0.x + 2*u*t*c.x + t*t*p1.x, u*u*p0.y + 2*u*t*c.y + t*t*p1.y)); } };
+  const right = [];
+  if (yFoot < eS.y - 1e-3) right.push(V((cw - wn.y * yFoot) / wn.x, yFoot)); // foot on the offset wall line
+  right.push(eS);
+  bez(eS, E, eX, right);                                 // right eave
+  right.push(rS);
+  const pts = [...right];
+  bez(rS, R, rX, pts);                                   // ridge (ends at the mirrored rS)
+  const left = right.map(p => V(-p.x, p.y)).reverse();   // mirrored right half, top → foot
+  pts.push(...left.slice(1));                            // skip mirrored rS (already the ridge's end)
+  return pts;
+}
+
+// Tube swept along a polyline (Vector3[]) — rolled-up fabric. `gather` > 0 ripples
+// the radius along the length so rolled flaps read as bunched fabric rather than a clean pipe.
+// `taper` (m) shrinks the radius over that length at each end so the tube closes off into whatever
+// it's attached to instead of ending as an open pipe. Pass [start, end] to taper the ends differently
+// (0 = leave that end full, e.g. a pillar standing on the floor).
+function makeTube(pts, r, gather = 0, radial = 20, taper = 0) {
+  const path = new THREE.CurvePath();
+  for (let i = 1; i < pts.length; i++) path.add(new THREE.LineCurve3(pts[i - 1], pts[i]));
+  const L = path.getLength(), tubular = Math.max(8, Math.ceil(L / 0.02));
+  const geo = new THREE.TubeGeometry(path, tubular, r, radial, false);
+  const [tStart, tEnd] = Array.isArray(taper) ? taper : [taper, taper];
+  if (tStart > 0 || tEnd > 0) {
+    const p = geo.attributes.position, nr = geo.attributes.normal;
+    for (let i = 0; i < p.count; i++) {
+      const ring = Math.floor(i / (radial + 1));
+      const d0 = ring / tubular * L, d1 = (tubular - ring) / tubular * L; // m from start / end
+      const t = Math.min(tStart > 0 ? d0 / tStart : 1, tEnd > 0 ? d1 / tEnd : 1, 1);
+      const f = 0.12 + 0.88 * t * t * (3 - 2 * t); // smoothstep, never fully 0
+      const k = r * (f - 1);
+      p.setXYZ(i, p.getX(i) + nr.getX(i) * k, p.getY(i) + nr.getY(i) * k, p.getZ(i) + nr.getZ(i) * k);
+    }
+  }
+  if (gather > 0) {
+    const p = geo.attributes.position, nr = geo.attributes.normal;
+    for (let i = 0; i < p.count; i++) {
+      // ring index along the tube, and position around it. Incommensurate frequencies + a
+      // circumferential term → irregular folds, not an evenly scalloped pipe
+      const s = Math.floor(i / (radial + 1)), a = (i % (radial + 1)) / radial * Math.PI * 2;
+      const k = gather * r * (0.5 * Math.sin(s * 0.53 + 0.8 * Math.sin(s * 0.13)) +
+                              0.3 * Math.sin(s * 1.37 + a * 2 + 0.6) + 0.2 * Math.sin(s * 0.29 + a));
+      p.setXYZ(i, p.getX(i) + nr.getX(i) * k, p.getY(i) + nr.getY(i) * k, p.getZ(i) + nr.getZ(i) * k);
+    }
+  }
+  return geo;
+}
+
+// Plan-view footprint loop: rounded rectangle (half-sizes hx × hz, corner r) sampled at n points of
+// uniform arc length u, each pushed out along its outward normal by off(u) at height y(u). Loops
+// built with the same hx/hz/r/n correspond vertex-for-vertex, so loftLoops can stitch them.
+// off(u, nx, nz) also gets the outward plan normal, so leaning (±x) sides can be offset differently.
+function footprintLoop(hx, hz, r, n, off, y) {
+  const lx = 2 * (hx - r), lz = 2 * (hz - r), arc = Math.PI * r / 2;
+  const segs = [ // walk: right edge → front-right corner → front edge → … (x, z plane)
+    { len: lz, at: t => [hx, -(hz - r) + t * lz, 1, 0] },
+    { len: arc, at: t => { const a = t * Math.PI / 2; return [hx - r + r * Math.cos(a), hz - r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } },
+    { len: lx, at: t => [hx - r - t * lx, hz, 0, 1] },
+    { len: arc, at: t => { const a = Math.PI / 2 + t * Math.PI / 2; return [-(hx - r) + r * Math.cos(a), hz - r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } },
+    { len: lz, at: t => [-hx, hz - r - t * lz, -1, 0] },
+    { len: arc, at: t => { const a = Math.PI + t * Math.PI / 2; return [-(hx - r) + r * Math.cos(a), -(hz - r) + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } },
+    { len: lx, at: t => [-(hx - r) + t * lx, -hz, 0, -1] },
+    { len: arc, at: t => { const a = 1.5 * Math.PI + t * Math.PI / 2; return [hx - r + r * Math.cos(a), -(hz - r) + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } },
+  ];
+  const per = segs.reduce((a, sg) => a + sg.len, 0);
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    let u = per * i / n, k = 0;
+    const u0 = u;
+    while (u > segs[k].len && k < segs.length - 1) { u -= segs[k].len; k++; }
+    const [x, z, nx, nz] = segs[k].at(Math.min(u / segs[k].len, 1));
+    const o = off(u0, nx, nz);
+    pts.push(new THREE.Vector3(x + nx * o, y(u0), z + nz * o));
+  }
+  return pts;
+}
+
+// Stitch consecutive loops (same point count) into one closed strip surface.
+function loftLoops(loops) {
+  const pos = [], uv = [], idx = [];
+  const n = loops[0].length;
+  let v = 0;
+  loops.forEach((L, j) => {
+    if (j > 0) v += L[0].distanceTo(loops[j - 1][0]);
+    let u = 0;
+    for (let i = 0; i <= n; i++) { // repeat first point → closed seam with continuous UVs
+      const p = L[i % n];
+      if (i > 0) u += p.distanceTo(L[i - 1]);
+      pos.push(p.x, p.y, p.z); uv.push(u, v);
+    }
+  });
+  for (let j = 0; j < loops.length - 1; j++) for (let i = 0; i < n; i++) {
+    const a = j * (n + 1) + i, b = a + n + 1;
+    idx.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+
+// Tent profile (x–y, side view), offset INWARD by b along each edge's normal (true offset, like Block 10's
+// archPts): back foot → up the back wall → rounded back eave → up the roof slope → visor tip. Open path.
+function profPts(b, seg = 12, minR = 0) {
+  const V = (x, y) => new THREE.Vector2(x, y);
+  const cR = RN.x * XE0 + RN.y * H_BACK - b;         // offset roof line: RN·p = cR
+  const cW = WN.x * XB - b;                          // offset (leaning) back wall line: WN·p = cW
+  const det = WN.x * RN.y - WN.y * RN.x;
+  const E = V((cW * RN.y - WN.y * cR) / det, (WN.x * cR - cW * RN.x) / det); // offset eave vertex
+  const tE = Math.max(bezTangent(Math.max(EAVE_RADIUS - b, minR), EAVE_HALF_TURN), 0.02);
+  const eS = E.clone().addScaledVector(WD, -tE), eX = E.clone().addScaledVector(RD, tE);
+  const pts = [V(cW / WN.x, 0), eS];                 // foot on the offset wall line
+  for (let k = 1; k <= seg; k++) { const t = k / seg, u = 1 - t;
+    pts.push(V(u * u * eS.x + 2 * u * t * E.x + t * t * eX.x, u * u * eS.y + 2 * u * t * E.y + t * t * eX.y)); }
+  pts.push(V(XT, (cR - RN.x * XT) / RN.y));          // visor tip
+  return pts;
+}
+
+// Plan footprint loop with ROUNDED BACK corners (rb — the rim curls there) and near-sharp FRONT corners (rf —
+// door wall meets side wall square). Uniform arc-length samples → loops stitch vertex-for-vertex.
+function footLoop(n, off, y, rb = RAKE_R, rf = 0.02) {
+  const arc = (cx, cz, r, a0) => ({ len: Math.PI * r / 2, at: t => { const a = a0 + t * Math.PI / 2;
+    return [cx + r * Math.cos(a), cz + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } });
+  const line = (x0, z0, x1, z1, nx, nz) => ({ len: Math.hypot(x1 - x0, z1 - z0), at: t => [x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, nx, nz] });
+  const segs = [
+    line(XF, -hd + rf, XF, hd - rf, 1, 0),              // front (door) edge
+    arc(XF - rf, hd - rf, rf, 0),
+    line(XF - rf, hd, XB + rb, hd, 0, 1),               // +z side
+    arc(XB + rb, hd - rb, rb, Math.PI / 2),
+    line(XB, hd - rb, XB, -hd + rb, -1, 0),             // back
+    arc(XB + rb, -hd + rb, rb, Math.PI),
+    line(XB + rb, -hd, XF - rf, -hd, 0, -1),            // −z side
+    arc(XF - rf, -hd + rf, rf, 1.5 * Math.PI),
+  ];
+  const per = segs.reduce((a, s) => a + s.len, 0), pts = [];
+  for (let i = 0; i < n; i++) {
+    let u = per * i / n, k = 0; const u0 = u;
+    while (u > segs[k].len && k < segs.length - 1) { u -= segs[k].len; k++; }
+    const [x, z, nx, nz] = segs[k].at(Math.min(u / segs[k].len, 1));
+    const o = off(u0, nx, nz);
+    pts.push(new THREE.Vector3(x + nx * o, y(u0), z + nz * o));
+  }
+  return pts;
+}
+
+// thin straight rope/rod between two points
+function rod(a, b, r, mat) {
+  const d = b.clone().sub(a), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), mat);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+  return m;
+}
+
+// ---------- Block 05 builder ----------
+function buildBlock05() {
+  const g = new THREE.Group();
+  const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+
+  // ---- body shell: back wall + roof + visor as ONE surface lofted along z, its ends curling in with RAKE_R
+  //      (rounded back corners + rounded rake), exactly like Block 10's roundedBodyTube
+  {
+    const base = profPts(0), counts = [];
+    for (let i = 1; i < base.length; i++) counts.push(Math.max(1, Math.ceil(base[i].distanceTo(base[i - 1]) / 0.1)));
+    const section = o => { const a = profPts(o), out = [a[0]];
+      for (let i = 1; i < a.length; i++) for (let k = 1; k <= counts[i - 1]; k++) out.push(a[i - 1].clone().lerp(a[i], k / counts[i - 1]));
+      return out; };
+    const M = 10, mid = hd - RAKE_R, fil = al => [RAKE_R - RAKE_R * Math.sin(al), RAKE_R - RAKE_R * Math.cos(al)];
+    const stations = [];
+    for (let k = 0; k < M; k++) { const [e, o] = fil(Math.PI / 2 * (1 - k / M)); stations.push([-(hd - e), o]); }
+    const nMid = Math.ceil(2 * mid / 0.1);
+    for (let j = 0; j <= nMid; j++) stations.push([-mid + 2 * mid * j / nMid, 0]);
+    for (let k = 1; k <= M; k++) { const [e, o] = fil(Math.PI / 2 * k / M); stations.push([hd - e, o]); }
+    const secs = stations.map(([z, o]) => section(o).map(p => V3(p.x, p.y, z)));
+    const n = secs[0].length, sec0 = section(0), us = [0];
+    for (let i = 1; i < n; i++) us.push(us[i - 1] + sec0[i].distanceTo(sec0[i - 1]));
+    const pos = [], uv = [], idx = [];
+    secs.forEach(sec => sec.forEach((p, i) => { pos.push(p.x, p.y, p.z); uv.push(us[i], p.z); }));
+    for (let k = 0; k < secs.length - 1; k++) for (let i = 0; i < n - 1; i++) {
+      // skip the FLAT back-wall strip (profile segment 0, mid stations) — the back panel with the large mesh
+      // window replaces it
+      if (i < counts[0] && stations[k][1] === 0 && stations[k + 1][1] === 0) continue;
+      const a = k * n + i, b = a + n, c = a + 1, d = b + 1;
+      idx.push(a, b, c, c, b, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const body = new THREE.Mesh(geo, matCanvas);
+    body.castShadow = body.receiveShadow = true;
+    g.add(body);
+  }
+
+  // ---- back wall (leaning BACK_LEAN_DEG from its foot at x = XB, opposite the entrance) with a LARGE MESH WINDOW across nearly its full width (per
+  //      the YAMATO 9+10+5 photo): flat panel replacing the shell's flat back strip (it overlaps the rim curl
+  //      by 1 cm so no crack shows), fine see-through screen, zipped U surround, rolled storm flap with straps.
+  {
+    const SEAM = 0.01, eS0 = profPts(0)[1], zW = hd - RAKE_R + SEAM;
+    const sl = y => y / WD.y;                           // height → distance up the leaning wall
+    const sTop = sl(eS0.y) + SEAM;
+    // sized from the YAMATO 9+10+5 photo (user: the first 208 × 47 cm try was oversize): mesh ≈ 66% of the
+    // back wall's width, → 160 × 40 cm
+    // moved up close under the roof (per user): top at 68 cm so the rolled flap (r 3.5 cm) tops out right at the
+    // start of the eave curve (≈ 74 cm)
+    const BW_SIDE = 0.40, BW_Y0 = 0.28, BW_Y1 = 0.68, BW_R = 0.04;
+    const bwW = 2 * (hd - BW_SIDE), bwH = sl(BW_Y1) - sl(BW_Y0), bwYc = (sl(BW_Y0) + sl(BW_Y1)) / 2; // along the slope
+    // shape coords (z, s = distance up the wall); basis → world: shape x → +z, y → up the leaning wall,
+    // normal → WN (outward at the back). Origin = the wall's foot line (XB, 0).
+    const basis = new THREE.Matrix4().makeBasis(V3(0, 0, 1), V3(WD.x, WD.y, 0), V3(WN.x, WN.y, 0));
+    const onBack = (y, out) => V3(backX(y) + WN.x * out, y + WN.y * out, 0); // point on/off the wall at height y
+    const shape = new THREE.Shape([new THREE.Vector2(-zW, 0), new THREE.Vector2(zW, 0), new THREE.Vector2(zW, sTop), new THREE.Vector2(-zW, sTop)]);
+    shape.holes.push(new THREE.Path(roundedRectShape2(bwW, bwH, BW_R, WIN_RB).getPoints(8).map(p => new THREE.Vector2(p.x, p.y + bwYc))));
+    const wallGeo = new THREE.ShapeGeometry(shape, 8);
+    wallGeo.applyMatrix4(basis);
+    const wall = new THREE.Mesh(wallGeo, matCanvas);
+    wall.position.x = XB;
+    wall.castShadow = wall.receiveShadow = true;
+    g.add(wall);
+
+    const scrGeo = new THREE.ShapeGeometry(roundedRectShape2(bwW + 0.02, bwH + 0.02, BW_R + 0.01, WIN_RB + 0.01), 8);
+    scrGeo.translate(0, bwYc, 0);
+    scrGeo.applyMatrix4(basis);
+    const scr = new THREE.Mesh(scrGeo, matGableMesh);
+    scr.position.set(XB - WN.x * 0.006, -WN.y * 0.006, 0); // just inside the wall plane
+    scr.renderOrder = 9;
+    scr.castShadow = true; scr.customDepthMaterial = matScreenShadow;
+    g.add(scr);
+
+    // zip tape U round the window — boxes tilted with the wall (local y along WD), 1.5 mm proud of it
+    const ZO = 0.06;
+    const zip = (dz, len, z, sMid) => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.003, len, dz), matTrim);
+      m.position.copy(onBack(sMid * WD.y, 0.0015)).setZ(z); m.rotation.z = -BACK_LEAN_RAD; g.add(m); };
+    zip(0.008, bwH + ZO, -bwW / 2 - ZO, bwYc - ZO / 2);
+    zip(0.008, bwH + ZO, bwW / 2 + ZO, bwYc - ZO / 2);
+    zip(bwW + 2 * ZO, 0.008, 0, sl(BW_Y0) - ZO);
+
+    const rollR = 0.035, rollY = BW_Y1 + rollR * 0.55;
+    // roll rests OUTSIDE the wall (it used to be half-sunk and poked 2 cm through into the interior)
+    const rollC = onBack(rollY, rollR + 0.003), rollX = rollC.x;
+    const flap = new THREE.Mesh(makeTube([V3(rollX, rollC.y, -bwW / 2 - 0.04), V3(rollX, rollC.y, bwW / 2 + 0.04)], rollR, 0.18, 20, 0.10), matCanvas);
+    flap.castShadow = flap.receiveShadow = true;
+    g.add(flap);
+    for (const z of [-0.5, 0.5]) { // max 2 ties per flap (per user)
+      // strap wraps the roll but is open (STRAP_GAP) where the roll touches the wall, so it can't poke inside;
+      // the gap is centred on the wall direction (−WN)
+      const strap = new THREE.Mesh(new THREE.TorusGeometry(rollR * 1.14, 0.005, 6, 28, Math.PI * 2 - STRAP_GAP), matTrim); // axis z = the roll
+      strap.rotation.z = Math.atan2(-WN.y, -WN.x) + STRAP_GAP / 2;
+      strap.position.set(rollX, rollC.y, z);
+      g.add(strap);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.04, 0.02), matTrim); // short tail (per user)
+      tail.position.copy(onBack(rollY - rollR - 0.015, 0.004)).setZ(z);
+      tail.rotation.z = -BACK_LEAN_RAD;                 // hangs flat against the leaning wall
+      g.add(tail);
+    }
+  }
+
+  // ---- side walls (z = ±hd): flat panels filling the rounded rim, with the leaning front edge of the porch
+  //      "wing" (front foot → visor tip). Each carries a 2×2-pane mesh window (per 05.jpg / block05.png).
+  // positioned from block05.png (user: move up + closer to the entrance): centre at 47% of the way from the
+  // leaning back edge to the porch wing's front edge, as drawn (x ≈ 0.03); mesh 43–83 cm up so the rolled
+  // flap sits just under the roof edge, like 05.jpg
+  const WIN_W = 0.50, WIN_H = 0.40, WIN_X = 0.03, WIN_Y = 0.63, WIN_R = 0.01; // 1 cm corners all round (per user)
+  const sideTop = profPts(RAKE_R - PANEL_TUCK);
+  const tipLow = sideTop[sideTop.length - 1];            // visor tip at the side-panel inset
+  for (const s of [-1, 1]) {
+    const shape = new THREE.Shape([...sideTop, new THREE.Vector2(XF, 0)]);
+    shape.holes.push(new THREE.Path(roundedRectShape(WIN_W, WIN_H, WIN_R).getPoints(8).map(p => new THREE.Vector2(p.x + WIN_X, p.y + WIN_Y)))); // small windows: no big bottom radius (per user)
+    const panel = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: FACING_D, bevelEnabled: false }), matCanvas);
+    panel.position.z = s === 1 ? hd - FACING_D : -hd;   // outer face on the rim plane
+    panel.castShadow = panel.receiveShadow = true;
+    g.add(panel);
+
+    // leaning front edge hem (finished edge of the porch wing)
+    g.add(new THREE.Mesh(makeTube([V3(tipLow.x, tipLow.y, s * (hd - FACING_D / 2)), V3(XF, 0.002, s * (hd - FACING_D / 2))], 0.007, 0, 10, [0.02, 0]), matCanvas));
+
+    // window: see-through fine screen (same as Block 10), dark 2×2 cross, zipped U-surround, rolled flap
+    const zMid = s * (hd - FACING_D / 2);
+    const winGeo = new THREE.ShapeGeometry(roundedRectShape(WIN_W + 0.02, WIN_H + 0.02, WIN_R), 8);
+    winGeo.translate(WIN_X, WIN_Y, zMid);
+    const win = new THREE.Mesh(winGeo, matGableMesh);
+    win.renderOrder = 9;
+    win.castShadow = true; win.customDepthMaterial = matScreenShadow; // ~50% sun through the mesh
+    g.add(win);
+    const zOut = zMid + s * 0.003;
+    const bar = (w, h, x, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.004), matTrim); m.position.set(x, y, zOut); g.add(m); };
+    bar(0.022, WIN_H, WIN_X, WIN_Y);                    // cross: vertical
+    bar(WIN_W, 0.022, WIN_X, WIN_Y);                    //        horizontal
+    const ZO = 0.07, zipZ = s * (hd + 0.0015);          // zip tape U round the window (flap zips down)
+    const zip = (w, h, x, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.003), matTrim); m.position.set(x, y, zipZ); g.add(m); };
+    zip(0.008, WIN_H + ZO, WIN_X - WIN_W / 2 - ZO, WIN_Y - ZO / 2);
+    zip(0.008, WIN_H + ZO, WIN_X + WIN_W / 2 + ZO, WIN_Y - ZO / 2);
+    zip(WIN_W + 2 * ZO, 0.008, WIN_X, WIN_Y - WIN_H / 2 - ZO);
+    // roll rests on the panel's outer face (half-sunk, it poked 7 mm through to the inside)
+    const rollR = 0.035, rollY = WIN_Y + WIN_H / 2 + rollR * 0.55, rollZ = s * (hd + rollR + 0.002);
+    const flap = new THREE.Mesh(makeTube([V3(WIN_X - WIN_W / 2 - 0.04, rollY, rollZ), V3(WIN_X + WIN_W / 2 + 0.04, rollY, rollZ)], rollR, 0.18, 20, 0.10), matCanvas);
+    flap.castShadow = flap.receiveShadow = true;
+    g.add(flap);
+    for (const xs of [-1, 1]) {
+      const x = WIN_X + xs * WIN_W * 0.3;
+      const strap = new THREE.Mesh(new THREE.TorusGeometry(rollR * 1.14, 0.005, 6, 28), matTrim);
+      strap.rotation.y = Math.PI / 2;                   // ring axis along x → wraps the x-axis roll
+      strap.position.set(x, rollY, rollZ);
+      g.add(strap);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.003), matTrim); // short tail (per user)
+      tail.position.set(x, rollY - rollR - 0.015, s * (hd + 0.004));
+      g.add(tail);
+    }
+  }
+
+  // ---- front door wall (x = XF, under the visor): flat panel between the side walls, top following the roof
+  //      underside (incl. the rim curl), with a big door opening; the door is rolled up along its top (05.jpg)
+  const DOOR_SIDE = 0.20, DOOR_SILL = 0.15, DOOR_TOP = 0.24, DOOR_TOP_Y = H_FRONT - DOOR_TOP;
+  {
+    const zEnd = hd - FACING_D, pts = [new THREE.Vector2(-zEnd, 0), new THREE.Vector2(zEnd, 0)];
+    // top edge = roof height at the wall's INNER face (x = XF − FACING_D): using the outer-face height made the
+    // wall poke ~3 mm up through the sloped roof — a light line along the roof (bug fix)
+    const yTopIn = roofY(XF - FACING_D);
+    for (let k = 0; k <= 60; k++) { const a = zEnd - 2 * zEnd * k / 60; pts.push(new THREE.Vector2(a, yTopIn - curlInset(a) / RN.y - 0.001)); }
+    const shape = new THREE.Shape(pts);                 // shape coords: (a = −z, y) — symmetric, so a ≡ −z is fine
+    const dw = 2 * (hd - DOOR_SIDE), dh = DOOR_TOP_Y - DOOR_SILL;
+    shape.holes.push(new THREE.Path(roundedRectShape2(dw, dh, 0.04, WIN_RB).getPoints(8).map(p => new THREE.Vector2(p.x, p.y + DOOR_SILL + dh / 2)))); // rounded bottom corners
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: FACING_D, bevelEnabled: false });
+    geo.applyMatrix4(new THREE.Matrix4().makeBasis(V3(0, 0, -1), V3(0, 1, 0), V3(1, 0, 0))); // (a, y, depth) → (−z, y, +x)
+    const wall = new THREE.Mesh(geo, matCanvas);
+    wall.position.x = XF - FACING_D;                    // outer face on the door plane
+    wall.castShadow = wall.receiveShadow = true;
+    g.add(wall);
+
+    // rolled-up door (door + inner mesh rolled together) under the opening's top edge, with two tie ropes
+    const rollR = 0.04, rollY = DOOR_TOP_Y + rollR * 0.7, rollX = XF + rollR * 0.2, zr = hd - DOOR_SIDE + 0.03;
+    const roll = new THREE.Mesh(makeTube([V3(rollX, rollY, -zr), V3(rollX, rollY, zr)], rollR, 0.16, 20, 0.10), matCanvas);
+    roll.castShadow = roll.receiveShadow = true;
+    g.add(roll);
+    const ROPE_R = 0.004, TAIL = 0.05; // short tails (per user)
+    for (const f of [-0.5, 0.5]) {     // max 2 ties per flap (per user)
+      const z = f * zr;
+      const loop = new THREE.Mesh(new THREE.TorusGeometry(rollR * 1.12, ROPE_R, 6, 28), matTrim); // axis along z = the roll
+      loop.position.set(rollX, rollY, z);
+      g.add(loop);
+      g.add(rod(V3(rollX + 0.004, rollY - rollR + 0.01, z), V3(rollX + 0.004, rollY - rollR - TAIL + 0.01, z), ROPE_R, matTrim));
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(ROPE_R * 2.2, 8, 6), matTrim);
+      knot.position.set(rollX + 0.004, rollY - rollR - TAIL + 0.01, z);
+      g.add(knot);
+    }
+  }
+
+  // ---- visor front edge hem: a rolled edge along the roof's free front edge, following the rim curl
+  {
+    const pts = [];
+    for (let k = 0; k <= 60; k++) { const z = -hd + 2 * hd * k / 60; pts.push(V3(XT, roofY(XT) - curlInset(z) / RN.y, z)); }
+    g.add(new THREE.Mesh(makeTube(pts, 0.008, 0, 12, 0.03), matCanvas)); // ends taper shut into the corners (no open pipe)
+  }
+
+  // Inflatable air bed (per user): 150 × 180 × 38 cm, same Naturehike-Horizon-style design as Block 10's
+  // (code copied from block10_mock.html). Glossy taupe PVC sides in three stacked bands, cream flocked top
+  // with a rolled rim and quilted tufts, pump panel + valve, two pillows. Placed against the back wall with
+  // its 180 cm length along z (as in 05.jpg), head toward the +z side wall, ~36 cm of floor inside the door.
+  {
+    const BED_W = 1.50, BED_L = 1.80, BED_H = 0.38, BED_R = 0.15; // plan corner radius
+    const bed = new THREE.Group();
+    bed.name = 'bed';
+    bed.position.set(backX(BED_H) + 0.03 + BED_W / 2, 0.004, 0); // 3 cm off the LEANING back wall at mattress-top height
+    bed.rotation.y = Math.PI;                            // local head (−z) → world +z side
+    g.add(bed);
+    const matBedSide = new THREE.MeshPhysicalMaterial({ color: 0x8b7560, roughness: 0.35, clearcoat: 0.5, clearcoatRoughness: 0.3, side: THREE.DoubleSide });
+    const matBedTop = new THREE.MeshStandardMaterial({ color: 0xe8e2d4, roughness: 0.95, side: THREE.DoubleSide }); // flocked
+    const hx = BED_W / 2, hz = BED_L / 2, N = 340;
+    const loop = (off, y) => footprintLoop(hx, hz, BED_R, N, () => off, () => y);
+
+    // side wall: three rounded bands — offset dips GROOVE at each band boundary; bottom rolls under
+    const SIDE_TOP = BED_H - 0.035, BAND = SIDE_TOP / 3, GROOVE = 0.012;
+    const sideLoops = [];
+    for (let k = 0; k <= 30; k++) {
+      const y = 0.002 + (SIDE_TOP - 0.002) * k / 30;
+      let off = GROOVE * (Math.sin(Math.PI * ((y % BAND) / BAND)) - 1);
+      if (y < 0.02) off -= 0.02 * (1 - y / 0.02) ** 2; // soft roll-under at the floor
+      sideLoops.push(loop(off, y));
+    }
+    const side = new THREE.Mesh(loftLoops(sideLoops), matBedSide);
+    side.castShadow = side.receiveShadow = true;
+    bed.add(side);
+
+    // top: cream rolled rim, continuing from the side's last loop over the edge and down into the field
+    const FIELD_IN = 0.115, FIELD_Y = BED_H - 0.014;
+    const rim = new THREE.Mesh(loftLoops([
+      loop(-GROOVE, SIDE_TOP), loop(-0.004, BED_H - 0.018), loop(-0.018, BED_H - 0.004),
+      loop(-0.045, BED_H), loop(-0.075, BED_H - 0.002), loop(-0.10, BED_H - 0.009), loop(-FIELD_IN, FIELD_Y),
+    ]), matBedTop);
+    rim.castShadow = false; rim.receiveShadow = true; // casting from this curved DoubleSide rim gave shadow acne; the side casts the bed's shadow
+    bed.add(rim);
+
+    // quilted field: a grid clamped to the rim's inner rounded rectangle; puffy cells between tuft
+    // dimples on a ~20 cm pitch, fading flat at the edge to meet the rim
+    const fx = hx - FIELD_IN, fz = hz - FIELD_IN, fr = BED_R - FIELD_IN, PITCH = 0.2;
+    const field = new THREE.PlaneGeometry(2 * fx, 2 * fz, Math.ceil(2 * fx / 0.015), Math.ceil(2 * fz / 0.015));
+    field.rotateX(-Math.PI / 2);
+    const fp = field.attributes.position;
+    for (let i = 0; i < fp.count; i++) {
+      let x = fp.getX(i), z = fp.getZ(i);
+      const cx = fx - fr, cz = fz - fr; // clamp the rectangle's corners onto the rounded corner arcs
+      if (Math.abs(x) > cx && Math.abs(z) > cz) {
+        const dx = Math.abs(x) - cx, dz = Math.abs(z) - cz, d = Math.hypot(dx, dz);
+        if (d > fr) { x = Math.sign(x) * (cx + dx / d * fr); z = Math.sign(z) * (cz + dz / d * fr); }
+      }
+      const gx = x - PITCH * Math.round(x / PITCH), gz = z - PITCH * Math.round(z / PITCH); // offset to nearest tuft
+      const puff = 1 - Math.exp(-(gx * gx + gz * gz) / (0.045 * 0.045));
+      const edge = Math.min(fx - Math.abs(x), fz - Math.abs(z)), fade = THREE.MathUtils.smoothstep(edge, 0, 0.06);
+      fp.setXYZ(i, x, FIELD_Y - 0.004 + 0.016 * puff * fade, z); // tufts dip below the rim-join level, cells puff above
+    }
+    field.computeVertexNormals();
+    const fieldMesh = new THREE.Mesh(field, matBedTop);
+    fieldMesh.receiveShadow = true;
+    bed.add(fieldMesh);
+
+    // built-in pump panel + inflation valve on the foot end (+z, facing the door), near one corner
+    const pumpY = BAND * 1.5; // middle band's crest
+    const pump = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.05, 0.012), new THREE.MeshStandardMaterial({ color: 0xd9cdb8, roughness: 0.6 }));
+    pump.rotation.y = Math.PI / 2;
+    pump.position.set(-hx - 0.004, pumpY, hz - 0.30); // long side facing the door, near the foot end
+    bed.add(pump);
+    const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.02, 20), new THREE.MeshStandardMaterial({ color: 0x3a3530, roughness: 0.5 }));
+    valve.rotation.z = Math.PI / 2;
+    valve.position.set(-hx - 0.008, pumpY, hz - 0.40);
+    bed.add(valve);
+
+    // two pillows at the head: puffy rounded slabs that pinch to a seam around their edge
+    const matPillow = new THREE.MeshStandardMaterial({ color: 0xf1eee8, roughness: 0.9 });
+    const PW = 0.56, PD = 0.38, PH = 0.15;
+    for (const [px, rot] of [[-0.32, 0.04], [0.32, -0.03]]) {
+      const pg = new THREE.BoxGeometry(2, 2, 2, 24, 8, 16); // unit cube −1..1, then shaped
+      const pp = pg.attributes.position;
+      for (let i = 0; i < pp.count; i++) {
+        const u = pp.getX(i), w = pp.getY(i), v = pp.getZ(i);
+        const t = Math.pow(Math.max(0, 1 - u ** 4), 0.55) * Math.pow(Math.max(0, 1 - v ** 4), 0.55); // domed, thinning to the seam
+        pp.setXYZ(i, u * PW / 2 * (1 - 0.04 * w * w), w * PH / 2 * t, v * PD / 2 * (1 - 0.04 * w * w));
+      }
+      pg.computeVertexNormals();
+      const pillow = new THREE.Mesh(pg, matPillow);
+      pillow.position.set(px, FIELD_Y + PH / 2 - 0.02, -hz + FIELD_IN + PD / 2 + 0.02); // sinks 2 cm into the top
+      pillow.rotation.y = rot;
+      pillow.castShadow = pillow.receiveShadow = true;
+      bed.add(pillow);
+    }
+  }
+
+  // (no black porch poles — removed per user; the canopy is carried by the side walls' leaning front edges)
+
+  // ---- interior AIR FRAME (per user), same treatment as Block 10: light-grey inflated beams, Ø14 cm, all joined.
+  //  - A frame at each side end (z = ±FRAME_Z), its centreline the tent profile offset in by FRAME_B: back pillar
+  //    (leaning with the back wall) → back eave elbow → roof rafter → front elbow → front pillar (vertical, just
+  //    inside the door wall) — one continuous tube per side.
+  //  - Two beams along z join the frames: the FRONT TOP beam at the front elbows (the highest member — Block 10's
+  //    "ridge", left bare) and the BACK EAVE beam at the back elbows.
+  //  - Fabric sleeves as in Block 10: runs wrapped; bare only at the front top beam, the bottom SLEEVE_Y0 of each
+  //    pillar (15 cm on the short back pillars, so they fit a sleeve too), and JOINT_BARE (25 cm) each way from
+  //    every junction centre (10 cm here, per user).
+  {
+    const POLE_R = 0.07, FRAME_B = 0.09, FRAME_Z = hd - FRAME_B, SEG = 12;
+    const V = (x, y) => new THREE.Vector2(x, y);
+    const bez = (p0, c, p1, out) => { for (let k = 1; k <= SEG; k++) { const t = k / SEG, u = 1 - t;
+      out.push(V(u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, u * u * p0.y + 2 * u * t * c.y + t * t * p1.y)); } };
+    // back half from the shared profile (leaning wall + eave bend), minus its visor tip
+    const back = profPts(FRAME_B, SEG, POLE_R * 1.3).slice(0, -1);
+    back[0] = V(back[0].x + 0.002 * BACK_LEAN, 0.002);
+    // front elbow: offset roof line meets the offset front wall line x = XF − FACING_D − FRAME_B
+    const cR = RN.x * XE0 + RN.y * H_BACK - FRAME_B, xFw = XF - FACING_D - FRAME_B;
+    const Fv = V(xFw, (cR - RN.x * xFw) / RN.y), DN = V(0, -1);
+    const tF = bezTangent(POLE_R * 1.3, Math.acos(RD.dot(DN)) / 2);
+    const fS = Fv.clone().addScaledVector(RD, -tF), fX = Fv.clone().addScaledVector(DN, tF);
+    const path = [...back, fS];
+    const iKneeB = 1 + SEG / 2;                            // back elbow midpoint (back[1] = bend start)
+    const iKneeF = path.length - 1 + SEG / 2;              // front elbow midpoint
+    bez(fS, Fv, fX, path);
+    path.push(V(xFw, 0.002));                              // front foot
+    const matPole = new THREE.MeshStandardMaterial({ color: 0xbfc3c7, roughness: 0.55, metalness: 0.15 }); // as Block 10
+    for (const sz of [-1, 1]) {
+      const m = new THREE.Mesh(makeTube(path.map(p => V3(p.x, p.y, sz * FRAME_Z)), POLE_R, 0, 24), matPole);
+      m.receiveShadow = true;
+      g.add(m);
+    }
+    const kneeB = path[iKneeB], kneeF = path[iKneeF];
+    const beamZ = (k, mat) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(POLE_R, POLE_R, 2 * FRAME_Z, 24), mat);
+      m.rotation.x = Math.PI / 2; m.position.set(k.x, k.y, 0); m.receiveShadow = true; g.add(m); };
+    beamZ(kneeF, matPole); // front top beam (bare)
+    beamZ(kneeB, matPole); // back eave beam (sleeved below)
+
+    // ---- camping lantern (per user, Blackdog-style reference) hanging from the bare front top beam, mid-width.
+    //      Black cap with a torch lens on top + power button, M-shaped wire bail, champagne-metal body with a
+    //      window onto a warm glowing filament tube, ribbed black rubber base. ≈ 17 cm body + bail, Ø ≈ 6 cm.
+    //      The tent's interior light source lives inside its glow tube.
+    {
+      const lamp = new THREE.Group();
+      const matBlack = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.55 });
+      const matBody = new THREE.MeshStandardMaterial({ color: 0x8f877b, roughness: 0.32, metalness: 0.75 });
+      const matSteel = new THREE.MeshStandardMaterial({ color: 0xc9cbce, roughness: 0.3, metalness: 0.85 });
+      const matInner = new THREE.MeshStandardMaterial({ color: 0x2a2724, roughness: 0.8 });
+      const matGlow = new THREE.MeshStandardMaterial({ color: 0xffa050, emissive: 0xff7a18, emissiveIntensity: 1.6, roughness: 0.4 }); // warm amber (2.2 / 0xffa040 tone-mapped to yellow-green)
+      const matLens = new THREE.MeshStandardMaterial({ color: 0xe8eef2, emissive: 0xcfd8de, emissiveIntensity: 0.35, roughness: 0.1, metalness: 0.2 });
+      const matGlass = new THREE.MeshStandardMaterial({ color: 0x9aa3a8, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.18, depthWrite: false });
+      const add = (geo, mat, y = 0) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; lamp.add(m); return m; };
+      const R = 0.029, WIN = Math.PI * 0.42;                // body radius; window opening angle (faces +x)
+      // base: ribbed black rubber foot (notched rim) + a thin dark seam ring
+      add(new THREE.CylinderGeometry(R + 0.002, R + 0.003, 0.026, 24), matBlack, 0.013);
+      for (let k = 0; k < 12; k++) {
+        const a = k / 12 * Math.PI * 2, rib = add(new THREE.BoxGeometry(0.006, 0.012, 0.004), matBlack, 0.006);
+        rib.position.set(Math.cos(a) * (R + 0.003), 0.006, Math.sin(a) * (R + 0.003)); rib.rotation.y = -a;
+      }
+      add(new THREE.TorusGeometry(R + 0.0005, 0.0015, 6, 32), matSteel, 0.027).rotation.x = Math.PI / 2;
+      // body: metal shell with a front window, dark interior, glow tube with a silver top segment, glass
+      const BH = 0.10, BY = 0.027 + BH / 2;
+      // (three.js cylinder θ is measured from +z, so +x is θ = π/2 — the opening is centred there, facing the door)
+      add(new THREE.CylinderGeometry(R, R, BH, 32, 1, true, Math.PI / 2 + WIN / 2, Math.PI * 2 - WIN), matBody, BY).material.side = THREE.DoubleSide;
+      // dark inner lining — open at the window (a closed cylinder here swallowed the glow tube)
+      add(new THREE.CylinderGeometry(R - 0.004, R - 0.004, BH, 24, 1, true, Math.PI / 2 + WIN / 2, Math.PI * 2 - WIN), matInner, BY).material.side = THREE.DoubleSide;
+      add(new THREE.CylinderGeometry(0.0055, 0.0055, 0.058, 16), matGlow, BY - 0.012).position.x = R - 0.012;
+      add(new THREE.CylinderGeometry(0.0075, 0.0075, 0.03, 16), matSteel, BY + 0.033).position.x = R - 0.012;
+      add(new THREE.CylinderGeometry(R + 0.0006, R + 0.0006, BH - 0.012, 24, 1, true, -WIN / 2 + Math.PI / 2, WIN), matGlass, BY);
+      // cap: black, tapering in to the top lens; power button facing the window side
+      const CY = 0.027 + BH;
+      add(new THREE.CylinderGeometry(R - 0.004, R + 0.002, 0.045, 32), matBlack, CY + 0.0225);
+      add(new THREE.CylinderGeometry(0.014, 0.014, 0.004, 24), matLens, CY + 0.046);
+      add(new THREE.TorusGeometry(0.0145, 0.0018, 6, 24), matSteel, CY + 0.046).rotation.x = Math.PI / 2;
+      const btn = add(new THREE.CylinderGeometry(0.007, 0.007, 0.004, 20), new THREE.MeshStandardMaterial({ color: 0x5a5d61, roughness: 0.4 }), CY + 0.018);
+      btn.rotation.z = Math.PI / 2; btn.position.x = R + 0.001;
+      // wire bail: M-shaped, pivoting on the cap sides (bail plane along z = along the beam)
+      const bY = CY + 0.03, bail = [[-1, 0], [-1.08, 0.035], [-0.42, 0.068], [0, 0.058], [0.42, 0.068], [1.08, 0.035], [1, 0]]
+        .map(([z, y]) => V3(0, bY + y, z * (R + 0.004)));
+      lamp.add(new THREE.Mesh(makeTube(bail, 0.0018, 0, 8), matSteel));
+      for (const sz of [-1, 1]) add(new THREE.SphereGeometry(0.004, 10, 8), matSteel, bY).position.z = sz * (R + 0.004);
+      // hang: S-hook from a ring round the beam down to the bail's centre dip
+      const ringR = POLE_R + 0.006, hangY = kneeF.y - ringR, dipY = bY + 0.058;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(ringR, 0.0025, 8, 40), matSteel); // axis z = the beam
+      ring.position.set(kneeF.x, kneeF.y, 0);
+      g.add(ring);
+      const HOOK = 0.035;
+      g.add(rod(V3(kneeF.x, hangY, 0), V3(kneeF.x, hangY - HOOK, 0), 0.002, matSteel));
+      lamp.position.set(kneeF.x, hangY - HOOK - dipY, 0);
+      lamp.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = false; });
+      g.add(lamp);
+      // the tent's interior light: warm, dim (per user), at the glow tube. A downward SPOT cone (≈ 81° half-angle,
+      // soft edge) rather than a point light: the lantern's solid cap stops light going straight up, so the beam it
+      // hangs from isn't blown out. No shadow casting — the page's ShadowMaterial ground would pick up the
+      // lantern's shadows and go grey all over.
+      const light = new THREE.SpotLight(0xffd9a8, 0.45, 5, Math.PI * 0.45, 0.7, 1.8);
+      light.position.set(R - 0.012, BY - 0.012, 0);
+      light.target.position.set(R - 0.012, BY - 1, 0);
+      lamp.add(light, light.target);
+    }
+
+    // sleeves
+    const SLEEVE_R = POLE_R + 0.012, SLEEVE_Y0 = 0.45, JOINT_BARE = 0.10; // junctions: 10 cm bare each side (per user — 25 → 5 → 10; Block 10 keeps 25)
+    const addSleeve = pts => {
+      const sl = new THREE.Mesh(makeTube(pts, SLEEVE_R, 0.05, 24, 0.03), matCanvas);
+      sl.receiveShadow = true;
+      g.add(sl);
+    };
+    const cum = [0];
+    for (let i = 1; i < path.length; i++) cum.push(cum[i - 1] + path[i].distanceTo(path[i - 1]));
+    const L = cum[cum.length - 1];
+    const pointAt = sv => { let i = 1; while (i < cum.length - 1 && cum[i] < sv) i++;
+      return path[i - 1].clone().lerp(path[i], (sv - cum[i - 1]) / (cum[i] - cum[i - 1])); };
+    const subPath = (s0, s1) => [pointAt(s0), ...path.filter((p, i) => cum[i] > s0 && cum[i] < s1), pointAt(s1)];
+    const sAtY = (a, b, sa, sb, y) => sa + (sb - sa) * (y - a.y) / (b.y - a.y); // arc length at height y on a straight run
+    // back (short-wall) pillar is only ~70 cm long: per user it gets a sleeve too, so its bare foot is 15 cm
+    // (not 45) — the 25 cm bare joint at its top is kept
+    const SLEEVE_Y0_BACK = 0.15;
+    const sFootB = sAtY(path[0], path[1], 0, cum[1], SLEEVE_Y0_BACK);
+    const sFootF = sAtY(path[path.length - 2], path[path.length - 1], cum[path.length - 2], L, SLEEVE_Y0);
+    const runs = [
+      [sFootB, cum[iKneeB] - JOINT_BARE],                  // back pillar
+      [cum[iKneeB] + JOINT_BARE, cum[iKneeF] - JOINT_BARE], // rafter
+      [cum[iKneeF] + JOINT_BARE, sFootF],                  // front pillar
+    ].filter(([a, b]) => b - a > 0.05);
+    for (const sz of [-1, 1]) for (const [a, b] of runs)
+      addSleeve(subPath(a, b).map(p => V3(p.x, p.y, sz * FRAME_Z)));
+    addSleeve([V3(kneeB.x, kneeB.y, -(FRAME_Z - JOINT_BARE)), V3(kneeB.x, kneeB.y, FRAME_Z - JOINT_BARE)]); // back eave beam
+  }
+
+  // ---- bathtub floor (500D PVC, same as Block 10): full-footprint sheet turning up into a 10 cm tub wall tight
+  //      against the inside of the walls, no gap to the tent
+  {
+    const N = 420;
+    // inset from the outer footprint to the inside of the tent skin: 1.6 cm behind the 1.2 cm side/door panels,
+    // 4 mm at the back (the shell itself)
+    const skin = (nx, nz) => 0.016 * Math.abs(nz) + (nx > 0 ? 0.016 * nx : -0.004 * nx);
+    const tubOff = (extra, y = 0) => (u, nx, nz) => -(skin(nx, nz) + extra + y * BACK_LEAN * Math.max(0, -nx)); // follows the back lean
+    const loops = [
+      footLoop(N, tubOff(0.035), () => 0.002),
+      footLoop(N, tubOff(0.012), () => 0.005),
+      footLoop(N, tubOff(0, 0.02), () => 0.02),
+      footLoop(N, tubOff(0, BAT_H), () => BAT_H),
+    ];
+    const tubWall = new THREE.Mesh(loftLoops(loops), matTentFloor);
+    tubWall.receiveShadow = true;
+    g.add(tubWall);
+    const floorGeo = new THREE.ShapeGeometry(new THREE.Shape(loops[0].map(p => new THREE.Vector2(p.x, -p.z))));
+    floorGeo.rotateX(-Math.PI / 2);
+    const floor = new THREE.Mesh(floorGeo, matTentFloor);
+    floor.position.y = 0.002;
+    floor.receiveShadow = true;
+    g.add(floor);
+    const top = loops[3];
+    g.add(new THREE.Mesh(makeTube([...top, top[0]], 0.004, 0, 8), matTentFloor));
+  }
+
+  // ---- snow skirt (same as Block 10): thin band from the wall base draping onto the ground in soft folds
+  {
+    const fold = u => 0.5 * Math.sin(u / 0.42 * Math.PI * 2) + 0.3 * Math.sin(u / 0.23 * Math.PI * 2 + 1.7)
+                    + 0.2 * Math.sin(u / 0.71 * Math.PI * 2 + 0.4);
+    const N = 480, Y_SEAM = 0.05;
+    const lean = (y, nx) => -y * BACK_LEAN * Math.max(0, -nx); // back wall surface is y·BACK_LEAN in at height y
+    const skirt = new THREE.Mesh(loftLoops([
+      footLoop(N, (u, nx) => lean(Y_SEAM, nx), () => Y_SEAM),
+      footLoop(N, (u, nx) => 0.003 + lean(Y_SEAM - 0.014, nx), () => Y_SEAM - 0.014),
+      footLoop(N, (u, nx) => 0.02 + 0.005 * fold(u) + lean(0.018, nx), () => 0.018),
+      footLoop(N, u => 0.045 + 0.012 * fold(u), u => 0.003 + 0.006 * Math.max(0, fold(u))),
+    ]), matCanvas);
+    skirt.receiveShadow = true;
+    g.add(skirt);
+  }
+
+  return g;
+}
+
+// soft interior light so the inside reads through the door and windows (mock-only aid)
+// (interior light now lives in the camping lantern hanging on the front top beam — see buildBlock05)
+
+// ---------- grounding (still no visible ground surface) ----------
+const shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.18 }));
+shadowCatcher.rotation.x = -Math.PI / 2;
+shadowCatcher.receiveShadow = true;
+scene.add(shadowCatcher);
+{
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; // opaque canvas: alphaMap reads the GREEN channel, black = clear
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.filter = 'blur(18px)';
+  ctx.fillStyle = 'rgb(140,140,140)';
+  ctx.fillRect(40, 40, 176, 176);
+  const tex = new THREE.CanvasTexture(c);
+  const blob = new THREE.Mesh(new THREE.PlaneGeometry((DEPTH + VISOR) * 1.5, WIDTH * 1.5),
+    new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: tex, transparent: true, depthWrite: false }));
+  blob.rotation.x = -Math.PI / 2;
+  blob.position.set(VISOR / 2, 0.001, 0);
+  scene.add(blob);
+}
+
+scene.add(buildBlock05());
+
+// debug handles (for MCP / console testing)
+window.__scene = scene;
+window.__camera = camera;
+window.__controls = controls;
+window.__renderer = renderer;
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

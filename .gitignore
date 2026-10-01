@@ -1,0 +1,8 @@
+# third-party reference photos (product images) — kept locally, not published
+*.jpg
+*.png
+*.webp
+# browser-automation scratch output
+.playwright-mcp/
+*.b64
+__pycache__/
