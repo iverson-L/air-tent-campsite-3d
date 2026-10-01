@@ -3,7 +3,7 @@
 An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, Block 05), built with
 [three.js](https://threejs.org/). It runs entirely in the browser and has no build step.
 
-**Live demo:** https://iversonpuppets.github.io/air-tent-campsite-3d/
+**Live demo:** https://iverson-l.github.io/air-tent-campsite-3d/
 
 ## Features
 - The full campsite (`index.html`):
