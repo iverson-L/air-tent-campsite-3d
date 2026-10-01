@@ -192,6 +192,8 @@
     <label class="toggle"><span>Dimension labels</span><kbd>2</kbd><input type="checkbox" id="showLabels" checked /></label>
     <label class="toggle"><span>Lights</span><kbd>3</kbd><input type="checkbox" id="lightsOn" checked /></label>
     <label class="toggle"><span>Night mode</span><kbd>4</kbd><input type="checkbox" id="nightMode" /></label>
+    <label class="toggle"><span>Rain</span><kbd>5</kbd><input type="checkbox" id="rainOn" /></label>
+    <label class="toggle"><span>Sound</span><kbd>6</kbd><input type="checkbox" id="soundOn" checked /></label>
   </details>
 
   <details open><summary>Controls</summary>
@@ -285,6 +287,8 @@ let jumpVy = 0, grounded = true;
 const fpControls = new PointerLockControls(camera, renderer.domElement);
 const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false };
 let fishing = null; // the pond's fishing spot (set up with the pond; E to fish)
+let life = null;    // camp life: grass, props, wildlife, fireflies, rain, sound (set up after the tents)
+let raining = false;
 // a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
 // page loses focus, and ignore WASD while Ctrl/Cmd/Alt is down (macOS drops the keyup of keys released under Cmd).
 function releaseKeys() { for (const k in keys) keys[k] = false; }
@@ -314,15 +318,16 @@ window.addEventListener('keydown', e => {
     e.preventDefault(); // stop page scroll + re-clicking the focused button
     if (!e.repeat && grounded && !inPond) { jumpVy = JUMP_V; grounded = false; } // no jumping while wading/swimming
   }
-  // Tab → toggle the debug view-direction indicator (instead of moving focus)
-  if (e.code === 'Tab') {
+  // Tab → toggle the debug view-direction indicator — except inside the settings panel, where Tab keeps moving the
+  // keyboard focus between controls (bug sweep: it used to swallow keyboard navigation everywhere)
+  if (e.code === 'Tab' && !document.getElementById('panel').contains(document.activeElement)) {
     e.preventDefault();
     dbgChk.checked = !dbgChk.checked;
     updateDbg();
   }
   // 1 flysheet · 2 dimension labels · 3 lights · 4 night mode (same as flipping the panel switches)
-  const toggleKeys = { Digit1: 'showFly', Digit2: 'showLabels', Digit3: 'lightsOn', Digit4: 'nightMode',
-    Numpad1: 'showFly', Numpad2: 'showLabels', Numpad3: 'lightsOn', Numpad4: 'nightMode' };
+  const toggleKeys = { Digit1: 'showFly', Digit2: 'showLabels', Digit3: 'lightsOn', Digit4: 'nightMode', Digit5: 'rainOn', Digit6: 'soundOn',
+    Numpad1: 'showFly', Numpad2: 'showLabels', Numpad3: 'lightsOn', Numpad4: 'nightMode', Numpad5: 'rainOn', Numpad6: 'soundOn' };
   if (toggleKeys[e.code] && !e.repeat) {
     const el = document.getElementById(toggleKeys[e.code]);
     el.checked = !el.checked;
@@ -377,7 +382,10 @@ function exitWalk() {
   controls.update();
   updateOS();
 }
-walkBtn.addEventListener('click', () => walking ? exitWalk() : enterWalk());
+walkBtn.addEventListener('click', () => {
+  if (fishing?.active) fishing.stop();       // (bug sweep) stand up from the fishing stool first, then switch modes
+  walking ? exitWalk() : enterWalk();
+});
 // desktop: click the scene while walking → pointer lock for mouse look.
 // touch taps are excluded so on-screen controls keep working as before (AnyDesk).
 renderer.domElement.addEventListener('click', e => {
@@ -705,6 +713,9 @@ grassTex.repeat.set(90 / TILE_M, 90 / TILE_M);
 // HOLE there so the basin below can be seen through the clear water (see the pond section further down).
 const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 1.8, // 1.8 m in the middle: deep enough to swim (per user)
   fishA: -0.12 };                                  // bank angle of the fishing spot (east bank, facing the camp side)
+// fixed spots for the camp-life props (per user), kept clear of the random trees
+const HAMMOCK = { a: [-12.5, -6.0], b: [-12.5, -2.2] };   // the two broadleaf trees the hammock hangs between
+const SUV_AT = [13.8, -2.5], DEER_AT = [-15.5, -11.0];
 const pondR = a => POND.R * (1 + 0.11 * Math.sin(2 * a + 1.0) + 0.07 * Math.sin(3 * a + 2.2) + 0.04 * Math.sin(5 * a + 0.4));
 const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
   const a = i / n * Math.PI * 2, r = pondR(a) * k;
@@ -4324,7 +4335,9 @@ const leafTex = makeLeafTexture();     leafTex.repeat.set(4, 3);   // broadleaf 
 // ---------- shared tree placement: canopy-radius-aware rejection so no trees overlap
 // (conifers and broadleafs share the same spot list, so they can't collide either) ----------
 const treeSpots = [[-9.5, 6.5, 2.28], [9.5, -6.5, 2.28], // anchor trees near site corners (string lights), r = 1.9 × 1.2
-  [POND.x, POND.z, POND.R * POND.sx * 1.25 + 1.5]];          // keep the pond and its banks clear of trees
+  [POND.x, POND.z, POND.R * POND.sx * 1.25 + 1.5],           // keep the pond and its banks clear of trees
+  [...HAMMOCK.a, 2.4], [...HAMMOCK.b, 2.4],                  // the hammock's two trees (placed as broadleafs below)
+  [...SUV_AT, 3.6], [...DEER_AT, 2.6]];                       // parked SUV, grazing deer
 function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
   const out = [];
   let guard = 0;
@@ -4346,6 +4359,9 @@ function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
 // ---------- tree models (per user: improved) — shared helpers ----------
 // gentle wind sway on the foliage (vertex shader, grows with height above `from`; phase per tree from its position)
 const treeWind = { value: 0 };
+// The shadow pass must sway the SAME way (customDepthMaterial below): with a static shadow the tiers' shadows slid
+// over the moving foliage and the ground shadow lagged — dark bands in the wrong places (per user).
+function swayDepth(from, amt) { return addSway(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), from, amt); }
 function addSway(mat, from, amt) {
   mat.onBeforeCompile = sh => {
     sh.uniforms.uWind = treeWind;
@@ -4394,6 +4410,7 @@ function shadeVerts(geo, f) {
   const flare = new THREE.CylinderGeometry(0.24, 0.34, 0.25, 8); flare.translate(0, 0.12, 0);          // root flare
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 1, map: barkTex });
   const canopyMat = addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: needleTex, vertexColors: true }), 1.5, 0.012);
+  const canopyDepth = swayDepth(1.5, 0.012);
 
   // 2 anchors + 32 random = 34 total (same count as before)
   const treePos = [[-9.5, 6.5, 1.2], [9.5, -6.5, 1.2], ...placeTrees(32, 16, 38, 0.8, 1.7, 1.9).map(t => [t.x, t.z, t.sc])];
@@ -4413,6 +4430,7 @@ function shadeVerts(geo, f) {
   });
   trunkIM.castShadow = canopyIM.castShadow = true;
   canopyIM.receiveShadow = true;
+  canopyIM.customDepthMaterial = canopyDepth;       // shadows sway with the foliage
   scene.add(trunkIM, canopyIM);
 }
 
@@ -4440,7 +4458,8 @@ function shadeVerts(geo, f) {
   }
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5d4130, roughness: 1, map: barkTex });
   const canopyMat = addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: leafTex, vertexColors: true }), 2.4, 0.016);
-  const pos = placeTrees(9, 15, 39, 0.9, 1.7, 1.8);
+  const canopyDepth = swayDepth(2.4, 0.016);
+  const pos = [...[HAMMOCK.a, HAMMOCK.b].map(([x, z]) => ({ x, z, sc: 1.15 })), ...placeTrees(9, 15, 39, 0.9, 1.7, 1.8)];
   const trunkIM = new THREE.InstancedMesh(mergeGeometries(limbs), trunkMat, pos.length);
   const canopyIM = new THREE.InstancedMesh(mergeGeometries(clumps), canopyMat, pos.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
@@ -4456,6 +4475,7 @@ function shadeVerts(geo, f) {
   });
   trunkIM.castShadow = canopyIM.castShadow = true;
   canopyIM.receiveShadow = true;
+  canopyIM.customDepthMaterial = canopyDepth;       // shadows sway with the foliage
   scene.add(trunkIM, canopyIM);
 }
 
@@ -5663,6 +5683,21 @@ function setNight(on) {
   pond.setNight(on);                          // water reflects the night sky
   fireLight.intensity = on ? 2.6 : 1.2;
   applyLights();
+  applyWeather();                             // rain darkens day or night on top
+  life?.setNight(on);
+}
+// RAIN (key 5, per user): overcast — sun ×0.3, grey sky + heavier haze — on top of day or night
+function fogBase() { return raining ? { c: isNight ? 0x151b24 : 0x9ea8b2, n: 14, f: 60 } : { c: isNight ? 0x1a2440 : 0xcfe6f7, n: 30, f: 90 }; }
+function applyWeather() {
+  const fb = fogBase();
+  scene.fog.color.set(fb.c); scene.fog.near = fb.n; scene.fog.far = fb.f;
+  wasUnder = null;                            // the underwater fog re-applies itself next frame if diving
+  sun.intensity = (isNight ? 0.35 : 1.6) * (raining ? 0.3 : 1);
+  hemi.intensity = (isNight ? 0.25 : 0.85) * (raining ? 0.9 : 1);
+  cloudMat.opacity = raining ? 1 : (isNight ? 0.15 : 0.85);
+  skyMat.color.set(raining ? (isNight ? 0x6b7280 : 0x9aa2ab) : 0xffffff);
+  sunSprite.visible = !isNight && !raining;
+  life?.setWeather(raining);
 }
 // all the camp's artificial lights — tent lanterns, table lanterns, string/festoon bulbs — follow the Lights switch
 // (key 3, per user) and night mode; the campfire stays lit
@@ -5732,6 +5767,495 @@ solo05.position.set(SOLO05.x, TENT_Y, SOLO05.z);
 solo05.rotation.y = Math.atan2(-(FIRE_Z - SOLO05.z), FIRE_X - SOLO05.x); // rotated +x = (cos θ, −sin θ) → toward the fire
 scene.add(solo05);
 
+// ---------- CAMP LIFE (per user): grass tufts + wildflowers, hammock, clothesline, SUV, boots & backpacks, campfire
+// cooking, ducks, birds, a grazing deer, fireflies (night), rain (key 5) and procedural sound (key 6) ----------
+life = (() => {
+  const V = (x, y, z) => new THREE.Vector3(x, y, z), rnd = (a, b) => a + Math.random() * (b - a);
+  const canvasTex = (w, h, draw) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; };
+  const softDot = canvasTex(64, 64, (x) => { const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); });
+  const shadowAll = g => { g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; }); return g; };
+  const inSite = (x, z) => x > AREA.x0 - 0.4 && x < AREA.x1 + 0.4 && z > AREA.z0 - 0.4 && z < AREA.z1 + 0.4;
+  const inPond = (x, z, m = 0.35) => { const dx = (x - POND.x) / POND.sx, dz = z - POND.z; return Math.hypot(dx, dz) < pondR(Math.atan2(dz, dx)) + m; };
+  let night = false, rain = false;
+
+  // ===== 3D grass tufts + wildflower patches on the grass (instanced, swaying; none on the gravel or in the pond) =====
+  {
+    const blades = [];
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2 + rnd(-0.3, 0.3), h = rnd(0.18, 0.32), lean = rnd(0.05, 0.12), w = 0.016;
+      const bx = Math.cos(a) * 0.03, bz = Math.sin(a) * 0.03, px = -Math.sin(a) * w, pz = Math.cos(a) * w;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([bx - px, 0, bz - pz, bx + px, 0, bz + pz, Math.cos(a) * (0.03 + lean), h, Math.sin(a) * (0.03 + lean)], 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));       // lit like the ground
+      g.setAttribute('color', new THREE.Float32BufferAttribute([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.15, 1.15, 1.15], 3)); // dark roots, light tips
+      blades.push(g);
+    }
+    const N = 2600, grass = new THREE.InstancedMesh(mergeGeometries(blades),
+      addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide, roughness: 1 }), 0, 0.2), N);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+    const free = (x, z) => Math.hypot(x, z) < 42 && !inSite(x, z) && !inPond(x, z);
+    let k = 0;
+    for (let guard = 0; k < N && guard < N * 8; guard++) {
+      const a = Math.random() * Math.PI * 2, r = 7 + Math.pow(Math.random(), 0.8) * 30, x = 0.5 + Math.cos(a) * r, z = 3.75 + Math.sin(a) * r;
+      if (!free(x, z) || Math.sin(x * 0.7) * Math.cos(z * 0.6) < -0.45) continue;                       // patchy, not a carpet
+      q.setFromAxisAngle(V(0, 1, 0), Math.random() * 6.28);
+      const s = rnd(0.7, 1.4);
+      grass.setMatrixAt(k, m4.compose(p.set(x, 0, z), q, sc.set(s, s * rnd(0.8, 1.5), s)));
+      grass.setColorAt(k++, col.setHSL(rnd(0.22, 0.29), rnd(0.42, 0.6), rnd(0.26, 0.38)));
+    }
+    grass.count = k;
+    grass.receiveShadow = true;
+    scene.add(grass);
+    // wildflowers: stems + flat 6-petal heads (both instanced, sharing positions so they sway together)
+    const stemGeo = new THREE.CylinderGeometry(0.003, 0.004, 1, 4).translate(0, 0.5, 0);
+    const headGeo = new THREE.CircleGeometry(0.03, 6).rotateX(-Math.PI / 2);
+    const NF = 480, stems = new THREE.InstancedMesh(stemGeo, addSway(new THREE.MeshStandardMaterial({ color: 0x4f7a32, roughness: 1 }), 0, 0.04), NF);
+    const heads = new THREE.InstancedMesh(headGeo, addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }), -1, 0.04), NF);
+    const palette = [0xfafafa, 0xf5d142, 0x9b6ad6, 0xf08ab0, 0xf28c28, 0x7fb2f0];
+    let f = 0;
+    for (let pc = 0; pc < 30 && f < NF; pc++) {
+      let cx, cz;
+      do { const a = Math.random() * 6.28, r = 8 + Math.random() * 24; cx = 0.5 + Math.cos(a) * r; cz = 3.75 + Math.sin(a) * r; } while (!free(cx, cz));
+      const c = new THREE.Color(palette[pc % palette.length]);
+      for (let i = 0; i < 16 && f < NF; i++) {
+        const x = cx + rnd(-1.1, 1.1), z = cz + rnd(-1.1, 1.1);
+        if (!free(x, z)) continue;
+        const h = rnd(0.16, 0.34);
+        stems.setMatrixAt(f, m4.compose(p.set(x, 0, z), q.identity(), sc.set(1, h, 1)));
+        heads.setMatrixAt(f, m4.compose(p.set(x, h, z), q.setFromAxisAngle(V(0, 1, 0), Math.random() * 6.28), sc.setScalar(rnd(0.7, 1.3))));
+        heads.setColorAt(f++, c);
+      }
+    }
+    stems.count = heads.count = f;
+    scene.add(stems, heads);
+  }
+
+  // ===== hammock between its two broadleaf trees (striped canvas sling, ropes round the trunks) =====
+  {
+    const [ax, az] = HAMMOCK.a, [bx, bz] = HAMMOCK.b, L = Math.hypot(bx - ax, bz - az);
+    const g = new THREE.Group();
+    g.position.set(ax, 0, az); g.rotation.y = Math.atan2(bx - ax, bz - az);             // local +z: tree a → tree b
+    const stripes = canvasTex(256, 64, (x, w, h) => { const cols = ['#e8dcc0', '#c4572e', '#e8dcc0', '#2f6f73', '#e8dcc0', '#d9a441'];
+      for (let i = 0; i < 12; i++) { x.fillStyle = cols[i % cols.length]; x.fillRect(0, i * h / 12, w, h / 12 + 1); } });
+    const z0 = 0.75, z1 = L - 0.75, ENDY = 1.18;
+    g.add(sling((u, v, o) => {
+      const z = z0 + (z1 - z0) * u, w = 0.06 + 0.45 * Math.sin(Math.PI * u) ** 0.6;       // gathered at the ends
+      const x = (v - 0.5) * 2 * w;
+      o.set(x, ENDY - 0.55 * Math.sin(Math.PI * u) - 0.12 * (1 - (2 * v - 1) ** 2) * Math.sin(Math.PI * u), z);
+    }, 24, 8, new THREE.MeshStandardMaterial({ map: stripes, roughness: 0.95, side: THREE.DoubleSide })));
+    const rope = new THREE.MeshStandardMaterial({ color: 0xd8cbb0, roughness: 1 });
+    for (const [zt, zh] of [[0.26, z0], [L - 0.26, z1]]) g.add(bentTube([V(0, 1.55, zt), V(0, ENDY, zh)], 0.008, rope));
+    for (const zt of [0.0, L]) {                                                          // rope wrap round each trunk
+      const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.012, 6, 20), rope); wrap.rotation.x = Math.PI / 2; wrap.position.set(0, 1.55, zt); g.add(wrap);
+    }
+    scene.add(shadowAll(g));
+  }
+
+  // ===== clothesline with towels (two posts at the back of the gravel, clear of the anchor tree's canopy and the
+  //       flysheet's back pegs — at x 5.6–9.0 its right post and a towel stood inside that tree, bug sweep) =====
+  const towels = [];
+  {
+    const g = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x7a5a3c, roughness: 0.9 });
+    const A = V(2.6, 1.9, -5.3), B = V(6.0, 1.9, -5.3);
+    for (const P of [A, B]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 2.0, 8), wood); post.position.set(P.x, 1.0, P.z); g.add(post); }
+    const linePts = Array.from({ length: 13 }, (_, i) => { const u = i / 12; return V(A.x + (B.x - A.x) * u, 1.9 - 0.1 * Math.sin(Math.PI * u), A.z); });
+    g.add(bentTube(linePts, 0.004, new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.8 }), 0.01));
+    [['#d64545', '#f4f1ea'], ['#2f7fb5', '#f4f1ea'], ['#f2c94c', '#6b8e4e']].forEach(([c1, c2], i) => {
+      const tex = canvasTex(64, 128, (x, w, h) => { x.fillStyle = c1; x.fillRect(0, 0, w, h); x.fillStyle = c2; for (const y of [18, 26, 100, 108]) x.fillRect(0, y, w, 4); });
+      const geo = new THREE.PlaneGeometry(0.42, 0.72, 4, 6).translate(0, -0.36, 0);    // pivot at the top edge
+      const towel = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, roughness: 1, side: THREE.DoubleSide }));
+      const u = 0.22 + i * 0.28;
+      towel.position.set(A.x + (B.x - A.x) * u, 1.9 - 0.1 * Math.sin(Math.PI * u) - 0.01, A.z);
+      g.add(towel); towels.push(towel);
+      for (const dx of [-0.15, 0.15]) { const pin = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.05, 0.016), wood); pin.position.copy(towel.position).add(V(dx, 0.0, 0)); g.add(pin); }
+    });
+    scene.add(shadowAll(g));
+  }
+
+  // ===== parked SUV at the site edge (olive): body extruded from a side profile (raked windscreen, sloped hood),
+  //       flush glass, black cladding, wheels with rims, lights, roof rack =====
+  {
+    const g = new THREE.Group(), paint = new THREE.MeshStandardMaterial({ color: 0x5d6b54, roughness: 0.45, metalness: 0.35 });
+    const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), glass = new THREE.MeshStandardMaterial({ color: 0x18202a, roughness: 0.08, metalness: 0.7 });
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xb8bcc0, roughness: 0.3, metalness: 0.9 });
+    const HW = 0.9;                                                    // half width of the body
+    // side profile in (z = along the car, y): rear bumper → roof → windscreen → hood → nose
+    const prof = [[-2.3, 0.36], [-2.28, 1.2], [-2.2, 1.86], [0.7, 1.9], [1.32, 1.22], [2.18, 1.06], [2.3, 0.86], [2.28, 0.4]];
+    const shape = new THREE.Shape(prof.map(([z, y]) => new THREE.Vector2(z, y)));
+    const bodyGeo = new THREE.ExtrudeGeometry(shape, { depth: 2 * HW - 0.12, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 3 });
+    bodyGeo.translate(0, 0, -(HW - 0.06)); bodyGeo.rotateY(-Math.PI / 2);   // shape x → world z, extrusion → world x
+    g.add(new THREE.Mesh(bodyGeo, paint));
+    const flat = (pts, mat) => { const geo = new THREE.BufferGeometry().setFromPoints(pts); geo.setIndex([0, 1, 2, 0, 2, 3]); geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); m.material.side = THREE.DoubleSide; g.add(m); return m; };
+    // glass: side windows (both sides), windscreen (in the raked plane, 6 mm proud), rear window
+    for (const sx of [-1, 1]) {
+      const x = sx * (HW + 0.004), ws = new THREE.Shape([[-2.1, 1.26], [-2.04, 1.76], [0.66, 1.79], [1.18, 1.26]].map(([z, y]) => new THREE.Vector2(z, y)));
+      const wg = new THREE.ShapeGeometry(ws); wg.rotateY(-Math.PI / 2); wg.translate(x, 0, 0);
+      const w = new THREE.Mesh(wg, glass); w.material.side = THREE.DoubleSide; g.add(w);
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.5, 0.08), black); pillar.position.set(x + sx * 0.003, 1.52, -0.55); g.add(pillar); // B-pillar
+    }
+    const wsN = new THREE.Vector3(0, 0.62 - 0.0, 0).set(0, 0.68, 0.62).normalize().multiplyScalar(0.006);   // rake normal (outward)
+    flat([V(-0.8, 1.86, 0.74), V(0.8, 1.86, 0.74), V(0.8, 1.27, 1.29), V(-0.8, 1.27, 1.29)].map(v => v.add(wsN)), glass);
+    flat([V(0.78, 1.26, -2.283), V(-0.78, 1.26, -2.283), V(-0.76, 1.76, -2.222), V(0.76, 1.76, -2.222)], glass); // 1 cm off the sloped tailgate
+    const box = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.3), mat); m.position.set(x, y, z); g.add(m); return m; };
+    box(2 * HW + 0.06, 0.22, 4.66, black, 0, 0.47, 0);               // lower cladding / bumpers
+    for (const sx of [-0.65, 0.65]) box(0.05, 0.05, 2.5, black, sx, 1.99, -0.75);                  // roof rails
+    for (const z of [-1.6, 0.1]) box(1.5, 0.04, 0.05, black, 0, 2.02, z);                          // cross bars
+    for (const [x, z] of [[-0.86, 1.48], [0.86, 1.48], [-0.86, -1.42], [0.86, -1.42]]) {
+      const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.28, 24), black); tyre.rotation.z = Math.PI / 2; tyre.position.set(x, 0.38, z); g.add(tyre);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.29, 12), chrome); rim.rotation.z = Math.PI / 2; rim.position.set(x, 0.38, z); g.add(rim);
+    }
+    for (const sx of [-0.62, 0.62]) {
+      box(0.34, 0.11, 0.05, new THREE.MeshStandardMaterial({ color: 0xf2f2e8, roughness: 0.2 }), sx, 0.93, 2.3);   // headlights
+      box(0.08, 0.32, 0.05, new THREE.MeshStandardMaterial({ color: 0x9a1b1b, roughness: 0.4 }), sx * 1.3, 1.15, -2.3); // tail lights
+    }
+    box(0.9, 0.16, 0.04, black, 0, 0.72, 2.32);                       // grille
+    g.position.set(SUV_AT[0], 0, SUV_AT[1]); g.rotation.y = 0.12;
+    scene.add(shadowAll(g));
+  }
+
+  // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
+  {
+    const sole = new THREE.MeshStandardMaterial({ color: 0x2a2522, roughness: 0.9 });
+    const boot = (leather) => {
+      const b = new THREE.Group(), m = new THREE.MeshStandardMaterial({ color: leather, roughness: 0.75 });
+      const s = new THREE.Mesh(new RoundedBoxGeometry(0.11, 0.03, 0.29, 2, 0.012), sole); s.position.y = 0.015; b.add(s);
+      const up = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.15, 0.17, 2, 0.035), m); up.position.set(0, 0.1, -0.05); b.add(up);
+      const toe = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), m); toe.scale.set(0.05, 0.04, 0.085); toe.position.set(0, 0.05, 0.07); b.add(toe);
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.042, 0.012, 6, 14), sole); collar.rotation.x = Math.PI / 2; collar.position.set(0, 0.175, -0.06); b.add(collar);
+      return b;
+    };
+    const pack = (color) => {
+      const b = new THREE.Group(), m = new THREE.MeshStandardMaterial({ color, roughness: 0.85 }), d = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.85 });
+      const body = new THREE.Mesh(new RoundedBoxGeometry(0.32, 0.5, 0.2, 3, 0.06), m); body.position.y = 0.25; b.add(body);
+      const lid = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.09, 0.22, 2, 0.04), d); lid.position.y = 0.51; b.add(lid);
+      const pocket = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.2, 0.07, 2, 0.03), d); pocket.position.set(0, 0.2, 0.12); b.add(pocket);
+      const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 12), new THREE.MeshStandardMaterial({ color: 0x3f8f5a, roughness: 0.4 })); bottle.position.set(0.19, 0.22, 0); b.add(bottle);
+      for (const sx of [-0.08, 0.08]) { const strap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.42, 0.015), d); strap.position.set(sx, 0.27, -0.11); b.add(strap); }
+      b.rotation.x = -0.22;                                            // leaning back a little
+      return b;
+    };
+    const place = (parent, obj, x, z, ry) => { obj.position.set(x, 0.003, z); obj.rotation.y = ry; parent.add(shadowAll(obj)); };
+    const pairL = new THREE.Group(); [[-0.07, 0.1], [0.08, -0.1]].forEach(([x, r]) => { const b = boot(0x6b4a2e); b.position.x = x; b.rotation.y = r; pairL.add(b); });
+    place(tentL, pairL, 1.18, 1.72, 0.3);
+    place(tentL, pack(0xc0612e), -1.2, 1.7, -0.4);
+    const pairR = new THREE.Group(); [[-0.07, -0.05], [0.08, 0.15]].forEach(([x, r]) => { const b = boot(0x3d3f44); b.position.x = x; b.rotation.y = r; pairR.add(b); });
+    place(tentR, pairR, -1.15, 1.72, -0.2);
+    place(u3b10, pack(0x2f5d7c), 1.2, 1.7, 0.5);
+  }
+
+  // ===== campfire cooking: tripod with a hanging cast-iron kettle (steaming), two marshmallow sticks =====
+  const steam = [];
+  {
+    const G = fireGroup, iron = new THREE.MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.55, metalness: 0.6 });
+    const apex = V(0, 1.35, 0);
+    for (const a of [30, 150, 270].map(d => d * Math.PI / 180)) G.add(bentTube([V(Math.cos(a) * 0.85, 0, Math.sin(a) * 0.85), apex], 0.012, iron));
+    for (let y = 1.32, i = 0; y > 0.94; y -= 0.035, i++) {                // chain links
+      const link = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.003, 4, 8), iron); link.position.set(0, y, 0); link.rotation.y = i % 2 ? Math.PI / 2 : 0; G.add(link);
+    }
+    const pot = new THREE.Mesh(new THREE.LatheGeometry([V(0, 0, 0), V(0.1, 0.005, 0), V(0.13, 0.04, 0), V(0.135, 0.12, 0), V(0.12, 0.17, 0), V(0.115, 0.175, 0)].map(v => new THREE.Vector2(v.x, v.y)), 20), iron);
+    pot.material.side = THREE.DoubleSide; pot.position.y = 0.72; G.add(pot);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.12, 0.02, 20), iron); lid.position.y = 0.9; G.add(lid);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), iron); knob.position.y = 0.915; G.add(knob);
+    const bail = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.004, 4, 20, Math.PI), iron); bail.position.y = 0.83; G.add(bail);
+    const steamMat = () => new THREE.SpriteMaterial({ map: softDot, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
+    for (let i = 0; i < 5; i++) { const sp = new THREE.Sprite(steamMat()); G.add(sp); steam.push({ sp, t0: i / 5 }); }
+    const stick = new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.9 });
+    const mallow = new THREE.MeshStandardMaterial({ color: 0xf1e6d2, roughness: 0.9 }), toasted = new THREE.MeshStandardMaterial({ color: 0xb87a3e, roughness: 0.8 });
+    for (const a of [100, 205].map(d => d * Math.PI / 180)) {
+      const foot = V(Math.cos(a) * 1.15, 0.01, Math.sin(a) * 1.15), tip = V(Math.cos(a) * 0.42, 0.52, Math.sin(a) * 0.42);
+      G.add(bentTube([foot, tip], 0.006, stick));
+      const dir = tip.clone().sub(foot).normalize();
+      [0.03, 0.08].forEach((d, i) => {
+        const mm = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.035, 12), i ? mallow : toasted);
+        mm.position.copy(tip).addScaledVector(dir, -d); mm.quaternion.setFromUnitVectors(V(0, 1, 0), dir); G.add(mm);
+      });
+    }
+  }
+
+  // ===== ducks paddling lazy loops on the pond =====
+  const ducks = [];
+  {
+    const mk = drake => {
+      const d = new THREE.Group(), M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 });
+      const part = (geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); d.add(m); return m; };
+      const ball = new THREE.SphereGeometry(1, 16, 12);
+      part(ball, M(drake ? 0xbdb8ad : 0x8a6a48), 0, 0.06, 0, 0.12, 0.085, 0.2);                 // body
+      part(ball, M(drake ? 0x6a3b26 : 0x7a5a3a), 0, 0.075, 0.1, 0.1, 0.085, 0.09);              // chest
+      part(ball, M(drake ? 0x2a2a2a : 0x6e5236), 0, 0.09, -0.19, 0.06, 0.04, 0.07);            // tail
+      part(new THREE.CylinderGeometry(0.03, 0.04, 0.1, 10), M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.15, 0.14).rotation.x = 0.3; // neck
+      part(ball, M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.21, 0.16, 0.05, 0.05, 0.06);              // head
+      part(new THREE.BoxGeometry(0.035, 0.012, 0.06), M(drake ? 0xe0b630 : 0xc0853a), 0, 0.2, 0.225); // beak
+      if (drake) { part(new THREE.TorusGeometry(0.034, 0.006, 6, 14), M(0xf2f2f2), 0, 0.165, 0.14).rotation.x = Math.PI / 2 - 0.3;
+        for (const sx of [-1, 1]) part(new THREE.BoxGeometry(0.01, 0.03, 0.06), M(0x2c4fa0), sx * 0.115, 0.08, -0.04); } // neck ring, speculum
+      for (const sx of [-1, 1]) part(new THREE.SphereGeometry(0.008, 6, 6), M(0x0b0b0c), sx * 0.04, 0.225, 0.19);
+      d.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      scene.add(d);
+      return d;
+    };
+    [true, false, true].forEach((drake, i) => ducks.push({ d: mk(drake), cx: rnd(-0.6, 0.6), cz: rnd(-0.5, 0.5), a: rnd(1.0, 2.0), b: rnd(0.8, 1.6), w: rnd(0.05, 0.09) * (i % 2 ? 1 : -1), ph: rnd(0, 6) }));
+  }
+
+  // ===== birds circling high over the camp by day (flapping, gliding, banking) =====
+  const birds = [];
+  {
+    const dark = new THREE.MeshStandardMaterial({ color: 0x2b2d31, roughness: 0.8, side: THREE.DoubleSide });
+    const wingGeo = new THREE.BufferGeometry();
+    wingGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0.06, 0, 0, -0.06, 0.38, 0, -0.1], 3)); wingGeo.computeVertexNormals();
+    for (let i = 0; i < 6; i++) {
+      const b = new THREE.Group(); const body = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), dark); body.scale.set(0.045, 0.045, 0.14); b.add(body);
+      const wl = new THREE.Mesh(wingGeo, dark), wr = new THREE.Mesh(wingGeo, dark); wr.scale.x = -1; b.add(wl, wr);
+      scene.add(b);
+      birds.push({ b, wl, wr, r: rnd(22, 38), y: rnd(16, 26), w: rnd(0.05, 0.09) * (i % 2 ? 1 : -1), ph: rnd(0, 6), fl: rnd(7, 10) });
+    }
+  }
+
+  // ===== a stag grazing in a clearing at the treeline (per user: refined model). Faces local +z.
+  //       Body: a sphere reshaped into a deep chest, tucked waist and rounded hips, coat shading to a pale belly
+  //       (vertex colours). Jointed legs (shoulder/elbow/knee, hip/stifle/hock — hind legs angle back at the hock),
+  //       dark hooves. Thick tapering neck on a pivot (graze ↔ look up), tapered head with dark nose, white muzzle
+  //       band and throat patch, leaf-shaped cupped ears, branching antlers with tines, a white-under tail. =====
+  const deer = {};
+  {
+    const g = new THREE.Group();
+    const COAT = new THREE.Color(0x8b5a33), BELLY = new THREE.Color(0xdcc7a6);
+    const coat = new THREE.MeshStandardMaterial({ color: 0x8b5a33, roughness: 0.9 }), shin = new THREE.MeshStandardMaterial({ color: 0x6a4428, roughness: 0.9 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xeee6d8, roughness: 0.9 }), dark = new THREE.MeshStandardMaterial({ color: 0x1d1712, roughness: 0.6 });
+    const bone = new THREE.MeshStandardMaterial({ color: 0xd8ccb2, roughness: 0.7 });
+    // body: unit sphere → length 1.25 m along z, half-depth by profile (deep chest, tucked waist, round hips)
+    const bodyGeo = new THREE.SphereGeometry(1, 32, 20);
+    {
+      const pp = bodyGeo.attributes.position, col = new Float32Array(pp.count * 3), c = new THREE.Color();
+      for (let i = 0; i < pp.count; i++) {
+        const ux = pp.getX(i), uy = pp.getY(i), uz = pp.getZ(i);
+        const z = uz * 0.62;                                                  // −0.62 rump … +0.62 brisket
+        const depth = 0.23 + 0.05 * Math.exp(-(((z - 0.32) / 0.22) ** 2)) - 0.035 * Math.exp(-(((z + 0.05) / 0.2) ** 2)); // chest / waist
+        const width = 0.17 + 0.02 * Math.exp(-(((z + 0.42) / 0.18) ** 2));  // hips a touch wider
+        const tuck = uy < 0 ? 0.035 * Math.exp(-(((z + 0.05) / 0.25) ** 2)) : 0; // belly line rises at the waist
+        pp.setXYZ(i, ux * width, uy * depth + tuck, z);
+        c.copy(COAT).lerp(BELLY, THREE.MathUtils.smoothstep(-uy, 0.35, 0.85));
+        col.set([c.r, c.g, c.b], i * 3);
+      }
+      bodyGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      bodyGeo.computeVertexNormals();
+    }
+    const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+    body.position.y = 0.79; g.add(body);
+    // limbs: tapered segments joint → joint, a sphere at each joint so they read as one leg
+    const Y = V(0, 1, 0);
+    const limb = (pts, radii, mats) => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), seg = new THREE.Mesh(new THREE.CylinderGeometry(radii[i + 1], radii[i], d.length(), 10), mats[i]);
+        seg.position.copy(a).addScaledVector(d, 0.5); seg.quaternion.setFromUnitVectors(Y, d.normalize()); g.add(seg);
+        // a ball at every joint — including the shoulder / hip, so the leg tops round off inside the body (flat cylinder
+        // caps poked out of the flanks before)
+        const j = new THREE.Mesh(new THREE.SphereGeometry(radii[i] * (i ? 1.05 : 1.0), 12, 10), mats[Math.max(0, i - 1)]); j.position.copy(a); g.add(j);
+      }
+      const hoof = new THREE.Mesh(new THREE.CylinderGeometry(radii.at(-1) * 0.9, radii.at(-1) * 1.15, 0.06, 10), dark);
+      hoof.position.copy(pts.at(-1)).add(V(0, 0.03, 0.01)); g.add(hoof);
+    };
+    for (const sx of [-1, 1]) {
+      const x = sx * 0.095;                                                    // inside the 0.17 m half-width of the body
+      limb([V(x, 0.74, 0.34), V(x, 0.52, 0.34), V(x, 0.31, 0.36), V(x, 0.08, 0.38), V(x, 0.03, 0.4)],        // front: shoulder → elbow → knee → fetlock
+           [0.07, 0.05, 0.03, 0.022, 0.026], [coat, coat, shin, shin]);
+      limb([V(x, 0.76, -0.42), V(x, 0.53, -0.34), V(x, 0.36, -0.55), V(x, 0.08, -0.5), V(x, 0.03, -0.48)],    // hind: hip → stifle → hock → fetlock
+           [0.085, 0.06, 0.032, 0.022, 0.026], [coat, coat, shin, shin]);
+    }
+    // tail: brown on top, white underneath (two flattened cones)
+    // tail: a short flat tail hanging over the rump, pivoting at its root (flicks up); white underside
+    const tail = new THREE.Group(); tail.position.set(0, 0.93, -0.6); g.add(tail);
+    const tTop = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), coat); tTop.scale.set(0.045, 0.1, 0.025); tTop.position.set(0, -0.085, -0.03); tail.add(tTop);
+    const tUnder = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); tUnder.scale.set(0.038, 0.085, 0.02); tUnder.position.set(0, -0.09, -0.048); tail.add(tUnder);
+    tail.rotation.x = 0.25;
+    // neck: pivot at the withers; the neck runs up its local +y, the head hangs off its end
+    const neck = new THREE.Group(); neck.position.set(0, 0.9, 0.44); g.add(neck);
+    const neckMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.13, 0.52, 14), coat); neckMesh.position.y = 0.24; neckMesh.scale.set(0.85, 1, 1.15); neck.add(neckMesh);
+    const throat = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); throat.scale.set(0.05, 0.07, 0.035); throat.position.set(0, 0.42, 0.075); neck.add(throat);
+    const head = new THREE.Group(); head.position.set(0, 0.5, 0.02); neck.add(head);
+    const headGeo = new THREE.SphereGeometry(1, 20, 14);                      // tapered: broad brow → narrow snout (+z)
+    { const pp = headGeo.attributes.position;
+      for (let i = 0; i < pp.count; i++) { const ux = pp.getX(i), uy = pp.getY(i), uz = pp.getZ(i), k = 1 - 0.5 * Math.max(0, uz);
+        pp.setXYZ(i, ux * 0.075 * k, uy * 0.085 * k - 0.02 * Math.max(0, uz), uz * 0.17); }
+      headGeo.computeVertexNormals(); }
+    const headMesh = new THREE.Mesh(headGeo, coat); headMesh.position.z = 0.1; head.add(headMesh);
+    const muzzle = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); muzzle.scale.set(0.04, 0.032, 0.03); muzzle.position.set(0, -0.035, 0.235); head.add(muzzle);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), dark); nose.scale.set(0.03, 0.022, 0.02); nose.position.set(0, -0.025, 0.268); head.add(nose);
+    const ears = [];
+    for (const sx of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.013, 10, 8), dark); eye.position.set(sx * 0.058, 0.03, 0.12); head.add(eye);
+      const earShape = new THREE.Shape(); earShape.moveTo(0, 0); earShape.quadraticCurveTo(0.06, 0.07, 0, 0.17); earShape.quadraticCurveTo(-0.06, 0.07, 0, 0);
+      const earGeo = new THREE.ShapeGeometry(earShape, 8);
+      { const pp = earGeo.attributes.position; for (let i = 0; i < pp.count; i++) pp.setZ(i, -Math.abs(pp.getX(i)) * 0.6); earGeo.computeVertexNormals(); } // cupped
+      const ear = new THREE.Group(); ear.position.set(sx * 0.055, 0.075, 0.02); ear.rotation.set(-0.2, sx * 0.5, -sx * 0.95); head.add(ear);
+      ear.add(new THREE.Mesh(earGeo, new THREE.MeshStandardMaterial({ color: 0x8b5a33, roughness: 0.9, side: THREE.DoubleSide })));
+      ears.push(ear);
+      // antler: main beam sweeping out, back and up, then forward; three tines rising off it
+      const beam = [V(sx * 0.03, 0.09, 0.02), V(sx * 0.1, 0.17, -0.04), V(sx * 0.17, 0.27, -0.02), V(sx * 0.19, 0.36, 0.06), V(sx * 0.15, 0.42, 0.16)];
+      head.add(bentTube(beam, 0.011, bone, 0.04));
+      for (const [i, h, f] of [[1, 0.14, 0.02], [2, 0.16, 0.03], [3, 0.12, 0.04]]) {
+        const base = beam[i], tip = base.clone().add(V(-sx * 0.015, h, f));
+        head.add(bentTube([base, tip], 0.007, bone));
+      }
+      const burr = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.005, 6, 12), bone); burr.position.copy(beam[0]); burr.rotation.x = Math.PI / 2; head.add(burr);
+    }
+    const [x, z] = DEER_AT;
+    g.position.set(x, 0, z); g.rotation.y = Math.atan2(0 - x, 3 - z) + 0.6;                // three-quarters toward the camp
+    scene.add(shadowAll(g));
+    Object.assign(deer, { neck, head, ears, tail, graze: true, until: 0, k: 1, twitch: 0 });
+  }
+
+  // ===== fireflies (night only): soft glowing points drifting near the grass, banks and treeline, blinking =====
+  const NFF = 90, ffPos = new Float32Array(NFF * 3), ffCol = new Float32Array(NFF * 3), ff = [];
+  const ffGeo = new THREE.BufferGeometry();
+  ffGeo.setAttribute('position', new THREE.BufferAttribute(ffPos, 3)); ffGeo.setAttribute('color', new THREE.BufferAttribute(ffCol, 3));
+  const fireflies = new THREE.Points(ffGeo, new THREE.PointsMaterial({ map: softDot, size: 0.34, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  fireflies.frustumCulled = false; fireflies.visible = false;
+  scene.add(fireflies);
+  for (let i = 0; i < NFF; i++) {
+    let x, z;
+    do { const a = Math.random() * 6.28, r = i < 30 ? rnd(4, 9) : rnd(11, 24), cx = i < 30 ? POND.x : 0.5, cz = i < 30 ? POND.z : 3.75; x = cx + Math.cos(a) * r; z = cz + Math.sin(a) * r; }
+    while (inSite(x, z) || inPond(x, z, 0));
+    ff.push({ x, z, y: rnd(0.3, 1.8), ph: rnd(0, 6), f: rnd(0.4, 0.9), bl: rnd(0.8, 1.6) });
+  }
+
+  // ===== rain: streaks in a box round the viewer (none under tents / flysheet), ripple rings on the pond =====
+  const NR = 4500, RB = 11, RH = 12, rPos = new Float32Array(NR * 6), drops = [];
+  const rGeo = new THREE.BufferGeometry(); rGeo.setAttribute('position', new THREE.BufferAttribute(rPos, 3));
+  const rainMat = new THREE.LineBasicMaterial({ color: 0xdde6ef, transparent: true, opacity: 0.6, fog: false });
+  const rainLines = new THREE.LineSegments(rGeo, rainMat);
+  rainLines.frustumCulled = false; rainLines.visible = false;
+  scene.add(rainLines);
+  for (let i = 0; i < NR; i++) drops.push({ x: rnd(-RB, RB), y: rnd(0, RH), z: rnd(-RB, RB), v: rnd(8, 11) });
+  let shelters = [];
+  const rings = Array.from({ length: 45 }, () => {
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe8f0f6, transparent: true, opacity: 0, depthWrite: false }));
+    m.position.y = POND.waterY + 0.006; scene.add(m); return { m, t: 1 + Math.random() };
+  });
+
+  // ===== SOUND (procedural Web Audio — no files): breeze + birds (day), crickets (night), fire crackle, water
+  //       lapping by the pond, rain. Positional sounds get louder as you walk up to them. Starts on first click/key. =====
+  const listener = new THREE.AudioListener();
+  camera.add(listener);
+  const ctx = listener.context, SR = ctx.sampleRate;
+  const buf = (sec, fill) => { const b = ctx.createBuffer(1, Math.floor(sec * SR), SR), d = b.getChannelData(0); fill(d, d.length); let mx = 0; for (const v of d) mx = Math.max(mx, Math.abs(v)); if (mx > 0) for (let i = 0; i < d.length; i++) d[i] /= mx; return b; };
+  const chirp = (d, t0, dur, f0, f1, amp) => { const s0 = Math.floor(t0 * SR), n = Math.floor(dur * SR); let ph = 0;
+    for (let i = 0; i < n && s0 + i < d.length; i++) { const u = i / n, f = f0 + (f1 - f0) * u; ph += 2 * Math.PI * f / SR; d[s0 + i] += Math.sin(ph) * Math.sin(Math.PI * u) ** 2 * amp; } };
+  const bufs = {
+    breeze: buf(12, (d, n) => { let b = 0; for (let i = 0; i < n; i++) { b = (b + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = b * (0.55 + 0.45 * Math.sin(2 * Math.PI * 2 * i / n)); } }),
+    birds: [0, 1, 2].map(() => buf(9, d => { for (let p = 0; p < 5; p++) { let t = Math.random() * 8.2; const f = rnd(2600, 4200), notes = 3 + (Math.random() * 4 | 0);
+      for (let k = 0; k < notes; k++) { chirp(d, t, rnd(0.05, 0.13), f * rnd(0.9, 1.2), f * rnd(0.7, 1.4), rnd(0.5, 1)); t += rnd(0.08, 0.18); } } })),
+    crickets: buf(4, d => { for (const [f, step, off] of [[4400, 0.62, 0.0], [4900, 0.71, 0.3]]) for (let t = off; t < 3.9; t += step) for (let p = 0; p < 4; p++) chirp(d, t + p * 0.032, 0.02, f, f, 0.8); }),
+    fire: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { lp += 0.02 * ((Math.random() * 2 - 1) - lp); d[i] = lp * 3; }
+      for (let c = 0; c < 70; c++) { const s0 = Math.random() * n | 0, len = rnd(0.004, 0.025) * SR | 0, a = rnd(0.3, 1); for (let i = 0; i < len && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * a * Math.exp(-6 * i / len); } }),
+    water: buf(6, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { lp += 0.05 * ((Math.random() * 2 - 1) - lp); d[i] = lp * (0.4 + 0.6 * Math.max(0, Math.sin(2 * Math.PI * 4 * i / n)) ** 2); } }),
+    rain: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; lp += 0.3 * (w - lp); d[i] = (w - lp) * 0.6 + lp * 0.4; }
+      for (let c = 0; c < 120; c++) { const s0 = Math.random() * n | 0; for (let i = 0; i < 200 && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * Math.exp(-i / 40) * 0.8; } }),
+  };
+  const amb = b => { const a = new THREE.Audio(listener); a.setBuffer(b); a.setLoop(true); a.setVolume(0); return a; };
+  const pos = (b, at, ref, parent = scene) => { const a = new THREE.PositionalAudio(listener); a.setBuffer(b); a.setLoop(true); a.setRefDistance(ref); a.setRolloffFactor(1.3); a.setVolume(0);
+    const o = new THREE.Object3D(); o.position.copy(at); o.add(a); parent.add(o); return a; };
+  const snd = {
+    breeze: amb(bufs.breeze), crickets: amb(bufs.crickets), rain: amb(bufs.rain),
+    fire: pos(bufs.fire, V(0, 0.4, 0), 2.2, fireGroup),
+    water: pos(bufs.water, V(POND.x, 0, POND.z), 3.5),
+    birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
+  };
+  let soundOn = true, started = false;
+  const applySound = () => {
+    listener.setMasterVolume(soundOn ? 1 : 0);
+    snd.breeze.setVolume(rain ? 0.12 : night ? 0.18 : 0.32);
+    for (const b of snd.birds) b.setVolume(!night && !rain ? 0.55 : 0);
+    snd.crickets.setVolume(night && !rain ? 0.3 : 0);
+    snd.rain.setVolume(rain ? 0.55 : 0);
+    snd.fire.setVolume(night ? 1.0 : 0.75);
+    snd.water.setVolume(0.6);
+  };
+  const startAudio = () => {
+    if (started) return;
+    started = true;
+    ctx.resume();
+    for (const a of [snd.breeze, snd.crickets, snd.rain, snd.fire, snd.water, ...snd.birds]) a.play();
+    applySound();
+  };
+  addEventListener('pointerdown', startAudio); addEventListener('keydown', startAudio);   // browsers need a gesture first
+
+  // ===== per-frame =====
+  const _c = new THREE.Vector3();
+  function update(t, dt) {
+    for (const tw of towels) tw.rotation.x = Math.sin(t * 1.3 + tw.position.x) * 0.06 + (rain ? 0.02 : 0);
+    for (const s of steam) {                                     // kettle steam wisps
+      const u = ((t / 3) + s.t0) % 1;
+      s.sp.position.set(0.04 + u * 0.15, 0.93 + u * 0.7, Math.sin(t + s.t0 * 6) * 0.05);
+      s.sp.scale.setScalar(0.06 + u * 0.25);
+      s.sp.material.opacity = 0.35 * Math.sin(Math.PI * u);
+    }
+    for (const k of ducks) {                                     // ducks: slow loops, bobbing, heading along the path
+      const ang = k.w * t + k.ph, x = POND.x + k.cx + k.a * Math.cos(ang) * POND.sx, z = POND.z + k.cz + k.b * Math.sin(ang);
+      k.d.position.set(x, POND.waterY - 0.03 + Math.sin(t * 1.7 + k.ph) * 0.006, z);
+      k.d.rotation.set(Math.sin(t * 1.3 + k.ph) * 0.04, Math.atan2(-k.a * Math.sin(ang) * k.w * POND.sx, k.b * Math.cos(ang) * k.w), 0);
+    }
+    for (const b of birds) {                                     // birds: circle, flap in bursts, glide, bank
+      b.b.visible = !night && !rain;
+      const ang = b.w * t + b.ph;
+      b.b.position.set(Math.cos(ang) * b.r, b.y + Math.sin(t * 0.3 + b.ph) * 1.5, 3 + Math.sin(ang) * b.r);
+      b.b.rotation.set(0, Math.atan2(-Math.sin(ang) * b.w, Math.cos(ang) * b.w), -Math.sign(b.w) * 0.25, 'YXZ');
+      const flap = Math.sin(t * 0.5 + b.ph) > -0.2 ? Math.sin(t * b.fl + b.ph) * 0.6 : 0.12;
+      b.wl.rotation.z = flap; b.wr.rotation.z = -flap;
+    }
+    if (t > deer.until) { deer.graze = !deer.graze; deer.until = t + (deer.graze ? rnd(4, 8) : rnd(2, 4)); }
+    deer.k += ((deer.graze ? 1 : 0) - deer.k) * Math.min(1, dt * 1.5);
+    deer.neck.rotation.x = THREE.MathUtils.lerp(0.5, 2.2, deer.k);                     // neck up (head high) ↔ down to the grass
+    deer.head.rotation.x = THREE.MathUtils.lerp(-0.25, -0.65, deer.k);                  // counters the neck tilt: head level when up, muzzle down when grazing
+    deer.head.rotation.y = deer.graze ? Math.sin(t * 1.7) * 0.08 : Math.sin(t * 0.8) * 0.5; // nibbling / looking round
+    if (t > deer.twitch) { deer.twitch = t + rnd(1.5, 4); deer.ears[Math.random() * 2 | 0].userData.flick = 1; }
+    for (const e of deer.ears) { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 4); e.rotation.x = -0.2 - 0.5 * Math.sin(Math.PI * e.userData.flick); }
+    deer.tail.rotation.x = 0.25 - Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.1;             // hangs, occasionally flicks up
+    if (fireflies.visible) {
+      ff.forEach((f, i) => {
+        ffPos.set([f.x + Math.sin(t * 0.3 * f.f + f.ph) * 0.8, f.y + Math.sin(t * 0.5 * f.f + f.ph * 2) * 0.3, f.z + Math.cos(t * 0.25 * f.f + f.ph) * 0.8], i * 3);
+        const glow = Math.max(0, Math.sin(t * f.bl + f.ph)) ** 3;
+        ffCol.set([1.0 * glow, 1.0 * glow, 0.45 * glow], i * 3);
+      });
+      ffGeo.attributes.position.needsUpdate = ffGeo.attributes.color.needsUpdate = true;
+    }
+    if (rain) {
+      _c.copy(camera.position);
+      for (let i = 0; i < NR; i++) {
+        const d = drops[i];
+        d.y -= d.v * dt;
+        if (d.y < 0) { d.y += RH; d.x = rnd(-RB, RB); d.z = rnd(-RB, RB); }
+        const x = _c.x + d.x, z = _c.z + d.z, y = Math.max(0, _c.y - 4) + d.y;
+        let hidden = false;
+        for (const b of shelters) if (x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y < b.max.y + 0.05) { hidden = true; break; }
+        const o = i * 6;
+        if (hidden) { rPos[o + 1] = rPos[o + 4] = -50; continue; }
+        rPos[o] = x; rPos[o + 1] = y; rPos[o + 2] = z; rPos[o + 3] = x - 0.03; rPos[o + 4] = y + 0.55; rPos[o + 5] = z;
+      }
+      rGeo.attributes.position.needsUpdate = true;
+      for (const r of rings) {                                   // pond ripple rings
+        r.t += dt;
+        if (r.t > 0.8) {
+          r.t = 0;
+          for (let k = 0; k < 6; k++) { const x = POND.x + rnd(-5, 5), z = POND.z + rnd(-4.5, 4.5); if (inPond(x, z, -0.4)) { r.m.position.x = x; r.m.position.z = z; break; } }
+        }
+        const u = r.t / 0.8; r.m.scale.setScalar(0.03 + u * 0.32); r.m.material.opacity = 0.7 * (1 - u) ** 1.5;
+      }
+    }
+  }
+  function refreshShelters() {
+    shelters = [tentL, tentR, block05, unit3, solo05, flyGroup].filter(Boolean).map(g => new THREE.Box3().setFromObject(g));
+  }
+  // (bug sweep) night ↔ day while raining now re-dims the streaks, and fireflies stay hidden in the rain
+  const applyLook = () => { fireflies.visible = night && !rain; rainMat.opacity = night ? 0.35 : 0.6; };
+  function setNight(on) { night = on; applyLook(); applySound(); }
+  function setWeather(on) {
+    rain = on; rainLines.visible = on; for (const r of rings) r.m.visible = on;
+    applyLook(); applySound();
+  }
+  function setSound(on) { soundOn = on; if (on) startAudio(); applySound(); }
+  for (const r of rings) r.m.visible = false;
+  return { update, refreshShelters, setNight, setWeather, setSound };
+})();
+
 function layoutTents() {
   const xC = gap / 2 + W / 2;
   tentL.position.set(-xC, TENT_Y, 0);
@@ -5770,6 +6294,7 @@ function updateCoverage() {
 function relayout() {
   layoutTents();
   buildFlysheet();
+  life?.refreshShelters();                    // rain stops under the tents / flysheet wherever they now stand
   flyGroup.visible = document.getElementById('showFly').checked;
   buildLabels();
   updateCoverage();
@@ -5788,6 +6313,8 @@ document.getElementById('showLabels').addEventListener('change', e => {
 });
 document.getElementById('nightMode').addEventListener('change', e => setNight(e.target.checked));
 document.getElementById('lightsOn').addEventListener('change', e => { lightsOn = e.target.checked; applyLights(); });
+document.getElementById('rainOn').addEventListener('change', e => { raining = e.target.checked; applyWeather(); });
+document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
 document.getElementById('closePanel').addEventListener('click', () => {
   document.getElementById('panel').classList.add('hidden');
@@ -5901,8 +6428,9 @@ renderer.setAnimationLoop(() => {
   const under = camera.position.y < POND.waterY && !!pond.depthAt(camera.position.x, camera.position.z);
   if (under !== wasUnder) {
     wasUnder = under;
-    scene.fog.color.set(under ? (isNight ? 0x08262c : 0x2f747b) : (isNight ? 0x1a2440 : 0xcfe6f7));
-    scene.fog.near = under ? 0.3 : 30; scene.fog.far = under ? 9 : 90;
+    const fb = fogBase();
+    scene.fog.color.set(under ? (isNight ? 0x08262c : 0x2f747b) : fb.c);
+    scene.fog.near = under ? 0.3 : fb.n; scene.fog.far = under ? 9 : fb.f;
     pond.setUnder(under);
   }
   // debug view-direction readout (compass + axes)
@@ -5916,6 +6444,7 @@ renderer.setAnimationLoop(() => {
   fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15);
   pond.update(t, dt);                         // koi swim, ripples drift
   treeWind.value = t;                         // foliage sway
+  life?.update(t, dt);                        // grass, wildlife, fireflies, rain, sound
   // slow cloud drift
   for (const c of clouds) { c.position.x += 0.004; if (c.position.x > 160) c.position.x = -160; }
   skyGroup.position.copy(camera.position); // keep the sky centred on the viewer (never clipped by camera.far)
