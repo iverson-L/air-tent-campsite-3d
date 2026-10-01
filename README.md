@@ -1,4 +1,4 @@
-# Air Tent Campsite 3D
+# Spark Air Tent Camping 3D Tour
 
 An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, Block 05), built with
 [three.js](https://threejs.org/). It runs entirely in the browser and has no build step.
