@@ -6651,7 +6651,8 @@ life = (() => {
     { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2, side: THREE.DoubleSide });
       glassTop(ZA + 0.03, ZA + 0.03, ZA - 0.03, 0, fm, 0.006); glassTop(-0.74, -0.74, -0.84, 0, fm, 0.006);
       const edge = (z0, z1, sx) => { const pos = [], idx = [], N = 12;
-        for (let i = 0; i <= N; i++) { const z = z0 + (z1 - z0) * i / N, y = topY(z) + 0.006, w = inset(topY(z), z); pos.push(sx * (w - 0.03), y, z, sx * w, y, z); if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); } }
+        // the outer edge tucks 6 mm out and 12 mm down over the side panel's top
+        for (let i = 0; i <= N; i++) { const z = z0 + (z1 - z0) * i / N, y = topY(z) + 0.006, w = inset(topY(z), z); pos.push(sx * (w - 0.03), y, z, sx * (w + 0.006), y - 0.012, z); if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); } }
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, fm)); };
       for (const sx of [-1, 1]) { edge(2.04, ZA, sx); edge(ZA, -0.84, sx); } }
     glassTop(2.04, 2.04, ZA + 0.03, 0.025, glassMat);                                                       // windscreen: straight front edge (ct_topview / ct_43view)
@@ -6678,7 +6679,9 @@ life = (() => {
     const bandD = [[1.425, lo(1.425)], [0.305, lo(0.305)], [0.305, bandTop(0.305)], [ZA, bandTop(ZA)], [1.425, bandTop(1.425)]];
     const bandR = [[0.32, lo(0.32)], [-0.765, lo(-0.765)], [-0.765, bandTop(-0.765)], [0.32, bandTop(0.32)]];
     // steel above the band (the A-pillar side triangle, then a thin strip to the roof edge), black on its inside
-    const capS = [[ZT + 0.005, lo(ZT)], [ZT + 0.005, topY(ZT + 0.005)], [ZA, topY(ZA)], [-0.765, topY(-0.765)], [-0.765, bandTop(-0.765)], [ZA, bandTop(ZA)]];
+    // it overlaps its neighbours (1 cm up past the roof edge, 1 cm down behind the band): butting them left slits of sky
+    // along the pillars in the driver's view (per user: "lot of gaps")
+    const capS = [[ZT + 0.005, lo(ZT) - 0.01], [ZT + 0.005, topY(ZT + 0.005) + 0.01], [ZA, topY(ZA) + 0.01], [-0.765, topY(-0.765) + 0.01], [-0.765, bandTop(-0.765) - 0.01], [ZA, bandTop(ZA) - 0.01]];
     for (const sx of [-1, 1]) {
       // windows sit on the crease line: a front quarter triangle, the front door window (driver's moves with the door), rear door
       panel(bandF, sx, bandMat, 0.005, [winQ]); panel(bandR, sx, bandMat, 0.005, [winR]); if (sx > 0) panel(bandD, sx, bandMat, 0.005, [winF]);
