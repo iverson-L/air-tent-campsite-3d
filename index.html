@@ -885,15 +885,25 @@ const TRACK = (() => {
   const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90), ...fillets];
   // what's drawn: the spur stops where the fillets start; a short stub fills the middle of the junction, drawn under the
   // loop so the loop's ruts stay on top (drawn to the loop's centre it ran its ruts across the loop)
-  const sEnd = 1 - R / spur.getLength();
+  const sEnd = 1 - (R - 3) / spur.getLength();          // 3 m past the fillets' start, covering where they still overlap
   const draw = { spur: Array.from({ length: 81 }, (_, i) => spur.getPointAt(sEnd * i / 80)), stub: Array.from({ length: 8 }, (_, i) => S.clone().lerp(j, i / 7)) };
   const HALF = 3;                                     // 6 m wide
   const near = (x, z, d) => { for (const ps of pts) for (let i = 1; i < ps.length; i++) { const a = ps[i - 1], b = ps[i], ex = b.x - a.x, ez = b.z - a.z;
     const u = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / (ex * ex + ez * ez))); if (Math.hypot(x - a.x - ex * u, z - a.z - ez * u) < d) return true; } return false; };
   return { loop, spur, pts, draw, HALF, near };
 })();
+// terrain (per user: "make the track got hill, bump, not all flat"): rolling hills with smaller bumps on top, out in the
+// open country. Exactly flat (0) within FLAT_R of the origin — the camp, pond, parking, grass, flowers and wildlife all
+// live on level ground — easing in by FLAT_R + 14 m. Everything out there (ground ring, track, trees, the car, your feet)
+// follows groundH.
+const FLAT_R = 46;
+const groundH = (x, z) => { const r = Math.hypot(x, z); if (r <= FLAT_R) return 0;
+  const u = Math.min(1, (r - FLAT_R) / 14), k = u * u * (3 - 2 * u);
+  const hills = 1.6 * Math.sin(x * 0.055 + 0.7) * Math.cos(z * 0.048 - 0.4) + 1.1 * Math.sin((x * 0.6 + z * 0.8) * 0.09 + 2.1) + 0.7 * Math.cos((x * 0.8 - z * 0.6) * 0.13 + 0.3);
+  const bumps = 0.18 * Math.sin(x * 0.9 + 1.3) * Math.sin(z * 0.75 + 0.2) + 0.1 * Math.sin(x * 0.62 - z * 0.48 + 1.0);   // ≥ 7 m waves: shorter ones bent more than the meshes can follow and grass poked through the road
+  return k * (hills + 1.0 + bumps); };
 const groundShape = new THREE.Shape();
-groundShape.absarc(0, 0, WORLD_R, 0, Math.PI * 2, false);
+groundShape.absarc(0, 0, FLAT_R, 0, Math.PI * 2, false);
 groundShape.holes.push(new THREE.Path(pondOutline().map(([x, z]) => new THREE.Vector2(x, -z)))); // shape y = −world z
 const groundGeo = new THREE.ShapeGeometry(groundShape, 96);
 { // UVs as the old CircleGeometry had them (0..1 across the 90 m disc), so the grass tile stays 2 m
@@ -904,6 +914,13 @@ const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: g
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
+{ // the hilly outer ring (FLAT_R → WORLD_R), fine enough (~1 m near the track) that the ground doesn't poke through it
+  const ring = new THREE.RingGeometry(FLAT_R, WORLD_R, 384, 110); ring.rotateX(-Math.PI / 2);
+  const pp = ring.attributes.position, uv = ring.attributes.uv;
+  for (let i = 0; i < pp.count; i++) { const x = pp.getX(i), z = pp.getZ(i); pp.setY(i, groundH(x, z)); uv.setXY(i, x / 90 + 0.5, -z / 90 + 0.5); }
+  ring.computeVertexNormals();
+  const hills = new THREE.Mesh(ring, ground.material); hills.receiveShadow = true; scene.add(hills);
+}
 // the dirt track: a ribbon along each curve, a tyre-rutted dirt texture repeating every 6 m. Soft border (per user): the
 // ribbon runs 1 m past the 6 m road on each side and an alpha map feathers it into the grass with a wavy, grainy edge
 // (its own 24 m repeat, so the edge doesn't visibly repeat with the ruts)
@@ -932,21 +949,22 @@ scene.add(ground);
     // so the 24 m alpha pattern tiles a whole number of times; a closing quad wrapping v back to 0 squeezed the whole
     // texture into one thin strip at the seam
     let total = 0; for (let i = 1; i < ps.length; i++) total += ps[i].distanceTo(ps[i - 1]);
-    const vs = closed ? 4 * Math.max(1, Math.round(total / 24)) / total : 1 / 6, m1 = ps.length - 1;
+    const vs = closed ? 4 * Math.max(1, Math.round(total / 24)) / total : 1 / 6, m1 = ps.length - 1, C = 9;   // C vertices across (1 m apart), so it follows the bumps
     for (let i = 0; i < ps.length; i++) {
       const a = closed ? ps[i ? i - 1 : m1 - 1] : ps[Math.max(0, i - 1)], b = closed ? ps[i < m1 ? i + 1 : 1] : ps[Math.min(m1, i + 1)];
       const tx = b.x - a.x, tz = b.z - a.z, L = Math.hypot(tx, tz) || 1, nx = -tz / L * WH, nz = tx / L * WH;
       if (i) len += ps[i].distanceTo(ps[i - 1]);
-      pos.push(ps[i].x + nx, y, ps[i].z + nz, ps[i].x - nx, y, ps[i].z - nz); uv.push(0, len * vs, 1, len * vs);
-      const al = fadeStart ? Math.min(1, len / fadeStart) : 1; col.push(1, 1, 1, al, 1, 1, 1, al);
-      if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); }
+      const al = fadeStart ? Math.min(1, len / fadeStart) : 1;
+      for (let c = 0; c < C; c++) { const f = 1 - 2 * c / (C - 1), px = ps[i].x + nx * f, pz = ps[i].z + nz * f;
+        pos.push(px, groundH(px, pz) + y + (Math.hypot(px, pz) > FLAT_R ? 0.08 : 0), pz); uv.push(c / (C - 1), len * vs); col.push(1, 1, 1, al); }
+      if (i) for (let c = 0; c < C - 1; c++) { const k = i * C + c, kp = k - C; idx.push(kp, k, kp + 1, kp + 1, k, k + 1); }
     }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
     geo.setIndex(idx); geo.computeVertexNormals(); if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
     const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; m.renderOrder = order; scene.add(m);
   };
-  ribbon(TRACK.draw.stub, 0.01, false, 0); ribbon(TRACK.pts[0], 0.012, true, 1); ribbon(TRACK.pts[2], 0.014, false, 2); ribbon(TRACK.pts[3], 0.014, false, 2);
-  ribbon(TRACK.draw.spur, 0.016, false, 3, 2.5);   // the spur fades in where it starts by the parked vehicles
+  ribbon(TRACK.draw.stub, 0.01, false, 0); ribbon(TRACK.pts[0], 0.012, true, 1); ribbon(TRACK.pts[2], 0.014, false, 2); ribbon(TRACK.pts[3], 0.014, false, 3);   // every piece its own order: equal orders sort by distance and flip-flopped (per user)
+  ribbon(TRACK.draw.spur, 0.016, false, 4, 2.5);   // the spur fades in where it starts by the parked vehicles
 }
 
 // camping area — rounded-rect gravel patch; everything outside is grass.
@@ -4676,7 +4694,7 @@ function shadeVerts(geo, f) {
   const col = new THREE.Color();
   treePos.forEach(([x, z, sc], i) => {
     q.setFromEuler(new THREE.Euler((Math.random() - 0.5) * 0.05, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.05)); // slight lean
-    p.set(x, 0, z); s.set(sc, sc * (0.9 + Math.random() * 0.3), sc);
+    p.set(x, groundH(x, z) - 0.08, z); s.set(sc, sc * (0.9 + Math.random() * 0.3), sc);
     m4.compose(p, q, s);
     trunkIM.setMatrixAt(i, m4);
     canopyIM.setMatrixAt(i, m4);
@@ -4721,7 +4739,7 @@ function shadeVerts(geo, f) {
   const col = new THREE.Color();
   pos.forEach(({ x, z, sc }, i) => {
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
-    p.set(x, 0, z); s.set(sc, sc * (0.85 + Math.random() * 0.3), sc);
+    p.set(x, groundH(x, z) - 0.08, z); s.set(sc, sc * (0.85 + Math.random() * 0.3), sc);
     m4.compose(p, q, s);
     trunkIM.setMatrixAt(i, m4);
     canopyIM.setMatrixAt(i, m4);
@@ -7702,7 +7720,16 @@ car = (() => {
     heading += speed / rig.WB * Math.tan(steer) * dt;
     g.position.x += Math.sin(heading) * speed * dt; g.position.z += Math.cos(heading) * speed * dt;
     if (blocked(g.position.x, g.position.z, heading)) { g.position.x = px; g.position.z = pz; heading = ph; if (Math.abs(speed) > 2) snd.door(); speed *= -0.25; }
-    g.rotation.set(-0.012 * Math.max(-3, Math.min(3, acc)) / 3, heading, 0, 'YXZ');   // nose dips braking, lifts accelerating
+    { // ride the terrain (per user: hills and bumps): height and pitch / roll from the ground under the four wheels, eased
+      const ch = Math.cos(heading), sh = Math.sin(heading), hw = rig.WB / 2, gx = g.position.x, gz = g.position.z;
+      const hF = groundH(gx + sh * hw, gz + ch * hw), hB = groundH(gx - sh * hw, gz - ch * hw), hR = groundH(gx + ch * 0.9, gz - sh * 0.9), hL = groundH(gx - ch * 0.9, gz + sh * 0.9);
+      const e = 1 - Math.exp(-dt * 10);
+      rig.tY = (rig.tY ?? 0) + ((hF + hB + hR + hL) / 4 - (rig.tY ?? 0)) * e;
+      rig.tP = (rig.tP ?? 0) + (-Math.atan2(hF - hB, rig.WB) - (rig.tP ?? 0)) * e;
+      rig.tR = (rig.tR ?? 0) + (Math.atan2(hR - hL, 1.8) - (rig.tR ?? 0)) * e;
+      g.position.y = rig.tY;
+    }
+    g.rotation.set(rig.tP - 0.012 * Math.max(-3, Math.min(3, acc)) / 3, heading, rig.tR, 'YXZ');   // terrain, plus the nose dipping braking / lifting accelerating
     // wheels spin and the fronts steer
     for (const w of rig.wheels) { w.w.rotation.x += (w.sx > 0 ? 1 : -1) * speed / rig.TR * dt; w.w.rotation.y = w.base + (w.front ? steer : 0); }
     rig.tailMat.emissiveIntensity = (rig.lightsOn ? 0.8 : 0) + 2.5 * brakeGlow;
@@ -7716,10 +7743,10 @@ car = (() => {
     } else {
       if (!dragging && Math.abs(speed) > 1.5) camYaw *= Math.exp(-dt * 1.6);                 // swing back behind
       const yaw = heading + camYaw, dist = rig.camDist;
-      _cam.set(g.position.x - Math.sin(yaw) * dist * Math.cos(camPitch), 1.0 + dist * Math.sin(camPitch) + 0.6, g.position.z - Math.cos(yaw) * dist * Math.cos(camPitch));
-      _cam.y = Math.max(0.6, _cam.y);
+      _cam.set(g.position.x - Math.sin(yaw) * dist * Math.cos(camPitch), g.position.y + 1.0 + dist * Math.sin(camPitch) + 0.6, g.position.z - Math.cos(yaw) * dist * Math.cos(camPitch));
+      _cam.y = Math.max(groundH(_cam.x, _cam.z) + 0.6, _cam.y);                              // never under a hill
       camera.position.lerp(_cam, 1 - Math.exp(-dt * 6));
-      _tgt.set(g.position.x + Math.sin(heading) * 1.2, 1.1, g.position.z + Math.cos(heading) * 1.2);
+      _tgt.set(g.position.x + Math.sin(heading) * 1.2, g.position.y + 1.1, g.position.z + Math.cos(heading) * 1.2);
       camera.lookAt(_tgt);
     }
   }
@@ -8148,7 +8175,7 @@ let dockCloth = null;
 
 relayout();
 window.__scene = scene; window.__camera = camera; window.__controls = controls; window.__renderer = renderer; // debug handles (MCP / console)
-window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun, get acts() { return acts; }, get car() { return car; } };                                       // profiling handles
+window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun, get acts() { return acts; }, get car() { return car; }, groundH };                                       // profiling handles
 
 function updateCoverage() {
   const xC = gap / 2 + W / 2;                    // tent centerline (= its roof ridge x)
@@ -8382,7 +8409,7 @@ renderer.setAnimationLoop(() => {
       fpControls.moveRight((s / len) * dist);
     }
     // eye level — C ducks (smooth), Space jumps with simple gravity
-    let targetH = keys.duck ? DUCK_H : EYE_H;
+    let targetH = (keys.duck ? DUCK_H : EYE_H) + groundH(camera.position.x, camera.position.z);   // up and down the hills
     // POND (per user): wade in standing on the sloping bed; where it's too deep to stand, swim with the head just above
     // the surface (gentle bob); hold C to dive under, release to come back up. Slower in the water, no jumping.
     const water = grounded ? pond.depthAt(camera.position.x, camera.position.z) : null;
