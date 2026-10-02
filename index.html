@@ -389,7 +389,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) relea
 window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) { if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys(); return; }
   // E → fishing (sit down / cast / strike); moving or Esc stands you up again
-  if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } fishing?.onE(); hammock?.onE(); }
+  if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } fishing?.onE(); hammock?.onE(); life?.deerOnE() || life?.rabbitOnE(); }
   if (fishing?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape'].includes(e.code)) { fishing.stop(); return; }
   if (hammock?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape', 'Space'].includes(e.code)) { hammock.stop(); return; }
   if (e.code === 'KeyW') keys.w = true;
@@ -6250,13 +6250,19 @@ life = (() => {
     // legs: shoulder / hip buried in the body → elbow / stifle → knee / hock (hind legs angle back) → fetlock → into the hoof
     const legCol = (c, q) => c.copy(COAT).lerp(SHIN, sstep(0.6 - q.y, 0, 0.22));      // coat darkens down to the shins
     const hoofGeo = new THREE.CylinderGeometry(0.02, 0.029, 0.05, 10);
+    // each leg (loft + hoof) hangs from a pivot at its shoulder / hip so it can swing when the deer walks or bounds
+    const legs = [];
     for (const sx of [-1, 1]) {
       const x = sx * 0.095;
       const front = [V(x, 0.8, 0.3), V(x, 0.54, 0.33), V(x, 0.32, 0.35), V(x, 0.1, 0.37), V(x, 0.03, 0.39)];
       const hind = [V(x, 0.82, -0.4), V(x, 0.56, -0.33), V(x, 0.37, -0.53), V(x, 0.1, -0.49), V(x, 0.03, -0.47)];
-      g.add(loft(front, [0.06, 0.042, 0.024, 0.019, 0.021], [0.085, 0.058, 0.028, 0.023, 0.025], legCol));
-      g.add(loft(hind, [0.07, 0.05, 0.026, 0.019, 0.021], [0.11, 0.075, 0.032, 0.023, 0.025], legCol));
-      for (const leg of [front, hind]) { const h = new THREE.Mesh(hoofGeo, dark); h.position.set(x, 0.025, leg.at(-1).z + 0.006); g.add(h); }
+      for (const [pts, rx, rz, isFront] of [[front, [0.06, 0.042, 0.024, 0.019, 0.021], [0.085, 0.058, 0.028, 0.023, 0.025], true],
+                                            [hind, [0.07, 0.05, 0.026, 0.019, 0.021], [0.11, 0.075, 0.032, 0.023, 0.025], false]]) {
+        const piv = new THREE.Group(); piv.position.copy(pts[0]); g.add(piv);
+        const m = loft(pts, rx, rz, legCol); m.position.copy(pts[0]).negate(); piv.add(m);
+        const h = new THREE.Mesh(hoofGeo, dark); h.position.set(x, 0.025, pts.at(-1).z + 0.006).sub(pts[0]); piv.add(h);
+        legs.push({ piv, isFront, sx });
+      }
     }
     // tail: a short, broad, flat tail lying down the rump from a root just under the skin; brown on the outside, white
     // underneath — the white only shows when it flicks up (it swings back/up with +rotation.x)
@@ -6311,10 +6317,15 @@ life = (() => {
       for (const [i, h] of [[2, 0.12], [3, 0.13], [4, 0.09]]) spike(beam[i], beam[i].clone().add(V(-sx * 0.012, h, 0.015)), 0.008);
       const burr = new THREE.Mesh(new THREE.SphereGeometry(0.015, 10, 6), bone); burr.scale.y = 0.6; burr.position.set(sx * 0.032, 0.076, 0.057); head.add(burr);
     }
+    // night eyeshine (per user): two small additive glows over the eyes, shown at night when it looks your way
+    const shineMat = new THREE.SpriteMaterial({ map: makeSunTexture(64), color: 0xb8ff9a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    const shine = [-1, 1].map(sx => { const sp = new THREE.Sprite(shineMat); sp.scale.setScalar(0.13); sp.position.set(sx * 0.058, 0.03, 0.135); return sp; });
     const [x, z] = DEER_AT;
     g.position.set(x, 0, z); g.rotation.y = Math.atan2(0 - x, 3 - z) + 0.6;                // three-quarters toward the camp
     scene.add(shadowAll(g));
-    Object.assign(deer, { neck, head, ears, tail, graze: true, until: 0, k: 1, twitch: 0 });
+    for (const sp of shine) head.add(sp);
+    Object.assign(deer, { g, neck, head, ears, tail, legs, shineMat, graze: true, until: 0, k: 1, twitch: 0,
+      mode: 'graze', calm: 0, ps: 0, last: V(0, 0, 0), phase: 0, target: V(0, 0, 0), fed: 0, apple: null, eat: 0, tameUntil: 0, heading: g.rotation.y });
   }
 
   // ===== fireflies (night only): soft glowing points drifting near the grass, banks and treeline, blinking =====
@@ -6377,6 +6388,9 @@ life = (() => {
     water: buf(4, (d, n) => { let lp = 0, lp2 = 0;
       for (let i = 0; i < n; i++) { const t = (i / SR) % (4 / 3), env = t < 0.3 ? (t / 0.3) ** 2 : Math.exp(-(t - 0.3) / 0.35);
         lp += 0.08 * ((Math.random() * 2 - 1) - lp); lp2 += 0.3 * (lp - lp2); d[i] = (lp * 0.7 + (lp - lp2) * 0.6) * env; } }),
+    // the stag's alarm snort when it bolts: a short, breathy low-passed burst
+    snort: buf(0.6, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR, env = t < 0.02 ? t / 0.02 : Math.exp(-(t - 0.02) / 0.09);
+      lp += 0.18 * ((Math.random() * 2 - 1) - lp); d[i] = lp * env * (0.7 + 0.3 * Math.sin(2 * Math.PI * 90 * t)); } }),
     rain: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; lp += 0.3 * (w - lp); d[i] = (w - lp) * 0.6 + lp * 0.4; }
       for (let c = 0; c < 120; c++) { const s0 = Math.random() * n | 0; for (let i = 0; i < 200 && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * Math.exp(-i / 40) * 0.8; } }),
   };
@@ -6389,7 +6403,10 @@ life = (() => {
     fire: pos(bufs.fire, V(0, 0.4, 0), 2.2, fireGroup),
     water: amb(bufs.water),
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
+    snort: pos(bufs.snort, V(0, 1.2, 0.7), 6, deer.g),
   };
+  snd.snort.setLoop(false);
+  const snort = () => { if (!started || !soundOn) return; snd.snort.setVolume(0.6); if (snd.snort.isPlaying) snd.snort.stop(); snd.snort.play(); };
   let soundOn = true, started = false;
   const applySound = () => {
     listener.setMasterVolume(soundOn ? 1 : 0);
@@ -6407,6 +6424,280 @@ life = (() => {
     applySound();
   };
   addEventListener('pointerdown', startAudio); addEventListener('keydown', startAudio);   // browsers need a gesture first
+
+  // ===== deer behaviour (per user: sneak up on it, feed it, eyeshine at night). First person only.
+  // graze ⇄ look round → ALERT when you come within ~10 m (13 at night): head up, it watches you, turning to follow.
+  // Running near it (> ~2.7 m/s within ~5.5 m) or stepping too close makes it FLEE: tail flagged up (white side), an
+  // alarm snort, bounding to another clearing at the treeline, where it settles and grazes again. Stand or walk slowly
+  // (Shift) near it for ~2 s and, within 4 m, E (or tap) holds out an apple: it walks up, eats from your hand, and
+  // goes back to grazing (counted). At night it's warier and its eyes shine when it looks your way. =====
+  const _dv = V(0, 0, 0), deerHud = document.getElementById('actHud');
+  const deerSay = html => { deerHud.innerHTML = html; deerHud.style.display = 'block'; deerHud.dataset.owner = 'deer'; };
+  const deerHush = () => { if (deerHud.dataset.owner === 'deer') { deerHud.style.display = 'none'; deerHud.dataset.owner = ''; } };
+  const TOUCH_UI = matchMedia('(pointer: coarse)').matches;
+  const angTo = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  const treeFree = (x, z, pad) => treeSpots.every(([tx, tz, tr]) => (Math.abs(tx - DEER_AT[0]) < 0.01 && Math.abs(tz - DEER_AT[1]) < 0.01) || Math.hypot(x - tx, z - tz) > tr + pad);
+  function fleeTarget(px, pz) {                       // a clearing at the treeline, away from you, reachable without trees
+    const g = deer.g; let best = null, bestScore = -1;
+    for (let k = 0; k < 40; k++) {
+      const a = Math.random() * Math.PI * 2, r = 17 + Math.random() * 9, x = Math.cos(a) * r, z = Math.sin(a) * r;
+      if (x > -12 && x < 13 && z > -9 && z < 16.5) continue;                       // not into the camp
+      const d = Math.hypot(x - g.position.x, z - g.position.z); if (d < 8 || d > 26) continue;
+      if (!treeFree(x, z, 1.3)) continue;
+      let clear = true; for (let u = 0.1; u < 1 && clear; u += 0.1) clear = treeFree(g.position.x + (x - g.position.x) * u, g.position.z + (z - g.position.z) * u, 0.4);
+      const score = Math.hypot(x - px, z - pz) + (clear ? 20 : 0);
+      if (score > bestScore) { bestScore = score; best = [x, z]; }
+    }
+    return best || [DEER_AT[0], DEER_AT[1]];
+  }
+  function flee(px, pz) {
+    const [x, z] = fleeTarget(px, pz);
+    deer.target.set(x, 0, z); deer.mode = 'flee'; deer.calm = 0; snort();
+    if (deer.apple) { scene.remove(deer.apple); deer.apple = null; }
+  }
+  function makeApple() {
+    const a = new THREE.Group();
+    const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.038, 14, 10), new THREE.MeshStandardMaterial({ color: 0xb3261e, roughness: 0.45 })); fruit.scale.y = 0.9; a.add(fruit);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.004, 0.025, 5), new THREE.MeshStandardMaterial({ color: 0x4a3420 })); stem.position.y = 0.04; a.add(stem);
+    return a;
+  }
+  const deerPlayer = () => walking && !fishing?.active && !hammock?.active;
+  // (not `inPond`: inside life that name is the grass-placement helper, which shadows the walk-mode flag)
+  const canFeed = () => deer.mode === 'alert' && deer.calm > 2 && deerPlayer() && !pond.depthAt(camera.position.x, camera.position.z) &&
+    Math.hypot(camera.position.x - deer.g.position.x, camera.position.z - deer.g.position.z) < 4;
+  function deerOnE() {
+    if (!canFeed()) return false;
+    camera.getWorldDirection(_dv); _dv.y = 0; _dv.normalize();
+    const ap = deer.apple = makeApple();
+    ap.position.copy(camera.position).addScaledVector(_dv, 0.5); ap.position.y = camera.position.y - 0.38; scene.add(ap);
+    // stand ~0.95 m back from the apple (head reach), on the line from the deer to the apple
+    const g = deer.g, dx = ap.position.x - g.position.x, dz = ap.position.z - g.position.z, L = Math.hypot(dx, dz) || 1;
+    deer.target.set(ap.position.x - dx / L * 0.95, 0, ap.position.z - dz / L * 0.95);
+    deer.mode = 'approach'; deerHush();
+    return true;
+  }
+  function deerUpdate(t, dt) {
+    const g = deer.g, P = camera.position, here = deerPlayer(), lerp = THREE.MathUtils.lerp;
+    const dx = P.x - g.position.x, dz = P.z - g.position.z, dist = Math.hypot(dx, dz);
+    const sp = Math.hypot(P.x - deer.last.x, P.z - deer.last.z) / Math.max(dt, 1e-3); deer.last.copy(P);
+    deer.ps += (Math.min(sp, 12) - deer.ps) * Math.min(1, dt * 6);                   // your (smoothed) ground speed
+    const wary = night ? 1.3 : 1, ALERT = 10 * wary, SPOOK = 5.5 * wary, CLOSE = night ? 2.2 : 1.5, FAST = night ? 2.2 : 2.7;
+    const toYou = Math.atan2(dx, dz);
+    let neckX = 0.6, headX = -0.3, headY = 0, tailUp = 0, gait = 0, speed = 0;     // gait: 0 still, 1 walk, 2 bound
+    const turnTo = (yaw, rate) => { deer.heading += Math.sign(angTo(deer.heading, yaw)) * Math.min(Math.abs(angTo(deer.heading, yaw)), rate * dt); };
+    const moveTo = (v, sp) => { const ddx = v.x - g.position.x, ddz = v.z - g.position.z, L = Math.hypot(ddx, ddz);
+      turnTo(Math.atan2(ddx, ddz), sp > 3 ? 5 : 2.5); const step = Math.min(L, sp * dt * Math.max(0, Math.cos(angTo(deer.heading, Math.atan2(ddx, ddz)))));
+      g.position.x += Math.sin(deer.heading) * step; g.position.z += Math.cos(deer.heading) * step; speed = sp; return L; };
+    switch (deer.mode) {
+      case 'graze': {
+        if (t > deer.until) { deer.graze = !deer.graze; deer.until = t + (deer.graze ? rnd(4, 8) : rnd(2, 4)); }
+        deer.k += ((deer.graze ? 1 : 0) - deer.k) * Math.min(1, dt * 1.5);
+        neckX = lerp(0.6, 2.7, deer.k); headX = lerp(-0.3, -1.2, deer.k);
+        headY = deer.graze ? Math.sin(t * 1.7) * 0.08 : Math.sin(t * 0.8) * 0.5;     // nibbling / looking round
+        if (here && dist < ALERT) { deer.mode = 'alert'; deer.calm = 0; }
+        break;
+      }
+      case 'alert': {                                   // head up, watching you; the body turns to keep you in view
+        deer.k += (0 - deer.k) * Math.min(1, dt * 3);
+        neckX = lerp(0.6, 2.7, deer.k); headX = lerp(-0.3, -1.2, deer.k);
+        const rel = angTo(deer.heading, toYou);
+        headY = Math.max(-0.9, Math.min(0.9, rel));
+        if (Math.abs(rel) > 0.8) turnTo(toYou, 1.2);
+        deer.calm = deer.ps < 2.1 ? deer.calm + dt : 0;
+        if (!here || dist > ALERT + 2) { deer.mode = 'graze'; deerHush(); }
+        else if ((deer.ps > FAST && dist < SPOOK) || (dist < CLOSE && t > deer.tameUntil)) flee(P.x, P.z);   // just fed: only running spooks it
+        else if (canFeed()) deerSay(TOUCH_UI ? '<b>Tap</b> to hold out an apple' : '<kbd>E</kbd> hold out an apple');
+        else deerHush();
+        break;
+      }
+      case 'approach': {                                // walk up to the apple you're holding out
+        const L = moveTo(deer.target, 0.9); gait = 1;
+        const ax = deer.apple.position.x - g.position.x, az = deer.apple.position.z - g.position.z;
+        headY = Math.max(-0.6, Math.min(0.6, angTo(deer.heading, Math.atan2(ax, az))));
+        if (!here || deer.ps > FAST || Math.hypot(P.x - deer.apple.position.x, P.z - deer.apple.position.z) > 1.6) flee(P.x, P.z);
+        else if (L < 0.06) { deer.mode = 'feed'; deer.eat = 0; }
+        break;
+      }
+      case 'feed': {                                    // muzzle at your hand, nibbling; the apple shrinks away
+        turnTo(Math.atan2(deer.apple.position.x - g.position.x, deer.apple.position.z - g.position.z), 2);
+        deer.eat += dt; neckX = 0.85; headX = -0.45 + Math.sin(t * 9) * 0.06;
+        deer.apple.scale.setScalar(Math.max(0.05, 1 - deer.eat / 4));
+        if (!here || deer.ps > FAST) flee(P.x, P.z);
+        else if (deer.eat > 4) {
+          scene.remove(deer.apple); deer.apple = null; deer.fed++;
+          toast(deer.fed === 1 ? 'The stag ate your apple 🍎' : `The stag ate your apple 🍎 — fed ${deer.fed}×`);
+          deer.mode = 'graze'; deer.graze = true; deer.until = t + rnd(5, 9); deer.calm = 0; deer.tameUntil = t + 20;
+        }
+        break;
+      }
+      case 'flee': {                                    // bounding off, white tail flagged up
+        const L = moveTo(deer.target, night ? 7 : 6); gait = 2; tailUp = 1; neckX = 0.45; headX = -0.15;
+        if (L < 0.4) { deer.mode = 'graze'; deer.graze = false; deer.until = t + rnd(2, 4); }
+        break;
+      }
+    }
+    // pose
+    deer.neck.rotation.x += (neckX - deer.neck.rotation.x) * Math.min(1, dt * 4);
+    deer.head.rotation.x += (headX - deer.head.rotation.x) * Math.min(1, dt * 4);
+    deer.head.rotation.y += (headY - deer.head.rotation.y) * Math.min(1, dt * 4);
+    if (t > deer.twitch) { deer.twitch = t + rnd(1.5, 4); deer.ears[Math.random() * 2 | 0].userData.flick = 1; }
+    for (const e of deer.ears) { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 4); e.rotation.x = -0.2 - 0.5 * Math.sin(Math.PI * e.userData.flick) - (deer.mode === 'alert' ? 0.25 : 0); }
+    deer.tailK = (deer.tailK || 0) + (tailUp - (deer.tailK || 0)) * Math.min(1, dt * 6);
+    deer.tail.rotation.x = 0.41 + Math.max(deer.tailK * 1.6, Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.4);
+    // gait: walk = diagonal pairs swinging; bound = fronts together, hinds together, body bobbing and rocking
+    deer.phase += dt * (gait === 2 ? 10 : gait === 1 ? 6 : 0);
+    const ph = deer.phase;
+    for (const l of deer.legs) {
+      const want = gait === 2 ? 0.6 * Math.sin(ph + (l.isFront ? 0 : Math.PI)) : gait === 1 ? 0.32 * Math.sin(ph + (l.isFront === (l.sx > 0) ? 0 : Math.PI)) : 0;
+      l.piv.rotation.x += (want - l.piv.rotation.x) * Math.min(1, dt * (gait ? 20 : 6));
+    }
+    const bobY = gait === 2 ? 0.22 * Math.max(0, Math.sin(ph)) : gait === 1 ? 0.015 * Math.abs(Math.sin(ph)) : 0;
+    g.position.y += (bobY - g.position.y) * Math.min(1, dt * 15);
+    g.rotation.set(gait === 2 ? 0.12 * Math.cos(ph) : 0, deer.heading, 0, 'YXZ');
+    // eyeshine: night, within 22 m, looking roughly your way (head up)
+    const look = Math.cos(angTo(deer.heading + deer.head.rotation.y, toYou));
+    const shine = night && dist < 22 && deer.k < 0.5 ? THREE.MathUtils.smoothstep(look, 0.55, 0.9) : 0;
+    deer.shineMat.opacity += (shine - deer.shineMat.opacity) * Math.min(1, dt * 5);
+  }
+
+  // ===== a wild rabbit (per user: "add a rabbit elsewhere, can feed with carrot"). Lives on a grassy patch east of
+  // the site. Same pattern as the stag, rabbit-sized: sits nibbling with ear twitches and short hops round its patch;
+  // within ~6 m (first person) it sits up tall, ears up, watching you; run near it or step within 1 m and it zig-zags
+  // off in quick hops, white scut showing. Calm for ~1.5 s within 3 m → E (or tap) puts down a carrot: it hops over
+  // and nibbles it, then stays tame for 20 s. Reddish eyeshine at night. =====
+  const rabbit = (() => {
+    const HOME = [[16.5, 7], [17, 11.5], [18, 2.5], [6, 19.5], [-4, 19.5]].find(([x, z]) => treeFree(x, z, 1.5) && !pond.depthAt(x, z)) || [16.5, 7];
+    const fur = new THREE.MeshStandardMaterial({ color: 0x8a7866, roughness: 0.95 }), pale = new THREE.MeshStandardMaterial({ color: 0xcfc3b2, roughness: 0.95 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: 0.95 }), pink = new THREE.MeshStandardMaterial({ color: 0xd99a9a, roughness: 0.8 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x141210, roughness: 0.4 }), ball = new THREE.SphereGeometry(1, 14, 10);
+    const r = new THREE.Group(); r.userData.dynamic = true;
+    const pose = new THREE.Group(); pose.position.z = -0.08; r.add(pose);       // pivots at the haunches: sit up = front rises
+    const part = (parent, mat, x, y, z, sx, sy, sz) => { const m = new THREE.Mesh(ball, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); parent.add(m); return m; };
+    part(pose, fur, 0, 0.1, 0.06, 0.085, 0.082, 0.13);                           // body
+    for (const sx of [-1, 1]) part(pose, fur, sx * 0.045, 0.08, 0.0, 0.05, 0.075, 0.085);   // haunches
+    part(pose, pale, 0, 0.09, 0.15, 0.055, 0.06, 0.05);                         // chest
+    part(pose, white, 0, 0.1, -0.06, 0.028, 0.028, 0.024);                      // scut (tail)
+    for (const sx of [-1, 1]) { part(pose, fur, sx * 0.05, 0.016, 0.03, 0.024, 0.016, 0.07); part(pose, fur, sx * 0.028, 0.02, 0.19, 0.016, 0.02, 0.025); } // hind feet, front paws
+    const head = new THREE.Group(); head.position.set(0, 0.185, 0.18); pose.add(head);
+    part(head, fur, 0, 0, 0.02, 0.05, 0.05, 0.065);
+    part(head, pale, 0, -0.02, 0.06, 0.03, 0.022, 0.03);                        // muzzle
+    part(head, pink, 0, -0.008, 0.083, 0.008, 0.006, 0.005);                    // nose
+    for (const sx of [-1, 1]) part(head, dark, sx * 0.036, 0.014, 0.045, 0.009, 0.01, 0.009);   // eyes
+    const ears = [-1, 1].map(sx => {
+      const e = new THREE.Group(); e.position.set(sx * 0.02, 0.035, -0.005); head.add(e);
+      part(e, fur, 0, 0.07, 0, 0.02, 0.075, 0.008); part(e, pink, 0, 0.07, 0.006, 0.012, 0.06, 0.003);
+      return e;
+    });
+    r.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    const shineMat = new THREE.SpriteMaterial({ map: makeSunTexture(64), color: 0xff6a4a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    for (const sx of [-1, 1]) { const sp = new THREE.Sprite(shineMat); sp.scale.setScalar(0.05); sp.position.set(sx * 0.04, 0.014, 0.052); head.add(sp); }
+    r.position.set(HOME[0], 0, HOME[1]); scene.add(r);
+    const R = { r, pose, head, ears, mode: 'idle', heading: Math.random() * 6.28, calm: 0, ps: 0, last: V(0, 0, 0), target: V(0, 0, 0),
+      hop: 1, hopFrom: V(0, 0, 0), hopTo: V(0, 0, 0), hopDur: 0.3, next: 2, carrot: null, eat: 0, fed: 0, tameUntil: 0, twitch: 0, sit: 0 };
+    const startHop = (to, dur) => { R.hopFrom.copy(r.position); R.hopTo.copy(to); R.hopTo.y = 0; R.hop = 0; R.hopDur = dur; R.heading = Math.atan2(to.x - r.position.x, to.z - r.position.z); };
+    const spot = (cx, cz, rad, awayX, awayZ) => {                            // a free patch of grass near (cx, cz)
+      for (let k = 0; k < 30; k++) {
+        const a = Math.random() * 6.28, d = rad * Math.sqrt(Math.random()), x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+        if (x > -12 && x < 13 && z > -9 && z < 16.5) continue;
+        if (!treeFree(x, z, 0.4) || pond.depthAt(x, z) || Math.hypot(x, z) > 36) continue;
+        if (awayX !== undefined && Math.hypot(x - awayX, z - awayZ) < 7) continue;
+        return V(x, 0, z);
+      }
+      return V(HOME[0], 0, HOME[1]);
+    };
+    function makeCarrot() {
+      const c = new THREE.Group();
+      const root = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.15, 10), new THREE.MeshStandardMaterial({ color: 0xe8711c, roughness: 0.7 }));
+      root.rotation.z = Math.PI / 2; c.add(root);                              // lying on the ground, tip toward +x
+      const leaf = new THREE.MeshStandardMaterial({ color: 0x4c8a2e, roughness: 0.8 });
+      for (const a of [-0.35, 0, 0.35]) { const l = new THREE.Mesh(new THREE.ConeGeometry(0.006, 0.09, 5), leaf); l.position.set(-0.115, 0.01, a * 0.03); l.rotation.set(a, 0, Math.PI / 2 + 0.25); c.add(l); }
+      return c;
+    }
+    const canFeed = () => R.mode === 'alert' && R.calm > 1.5 && deerPlayer() && !pond.depthAt(camera.position.x, camera.position.z) &&
+      Math.hypot(camera.position.x - r.position.x, camera.position.z - r.position.z) < 3;
+    function onE() {
+      if (!canFeed()) return false;
+      camera.getWorldDirection(_dv); _dv.y = 0; _dv.normalize();
+      const c = R.carrot = makeCarrot(); c.position.copy(camera.position).addScaledVector(_dv, 0.6); c.position.y = 0.022;
+      c.rotation.y = Math.random() * 6.28; scene.add(c);
+      const dx = c.position.x - r.position.x, dz = c.position.z - r.position.z, L = Math.hypot(dx, dz) || 1;
+      R.target.set(c.position.x - dx / L * 0.2, 0, c.position.z - dz / L * 0.2);   // muzzle at the carrot
+      R.mode = 'approach'; hush();
+      return true;
+    }
+    const say = html => { deerHud.innerHTML = html; deerHud.style.display = 'block'; deerHud.dataset.owner = 'rabbit'; };
+    const hush = () => { if (deerHud.dataset.owner === 'rabbit') { deerHud.style.display = 'none'; deerHud.dataset.owner = ''; } };
+    function flee(px, pz) {
+      R.mode = 'flee'; R.calm = 0; R.target.copy(spot(HOME[0], HOME[1], 9, px, pz)); R.zig = 0;
+      if (R.carrot) { scene.remove(R.carrot); R.carrot = null; }
+    }
+    function update(t, dt) {
+      const P = camera.position, here = deerPlayer(), dx = P.x - r.position.x, dz = P.z - r.position.z, dist = Math.hypot(dx, dz);
+      R.ps += (Math.min(Math.hypot(P.x - R.last.x, P.z - R.last.z) / Math.max(dt, 1e-3), 12) - R.ps) * Math.min(1, dt * 6); R.last.copy(P);
+      const wary = night ? 1.3 : 1, ALERT = 6 * wary, SPOOK = 4 * wary, CLOSE = night ? 1.3 : 0.9, FAST = night ? 2.2 : 2.6;
+      let sitUp = 0, earsUp = 0, nibble = 0;
+      // hop in progress: arc along hopFrom → hopTo
+      if (R.hop < 1) {
+        R.hop = Math.min(1, R.hop + dt / R.hopDur);
+        r.position.lerpVectors(R.hopFrom, R.hopTo, R.hop); r.position.y = Math.sin(Math.PI * R.hop) * (R.mode === 'flee' ? 0.16 : 0.08);
+      } else r.position.y = 0;
+      const hopping = R.hop < 1;
+      switch (R.mode) {
+        case 'idle':
+          nibble = 1;
+          if (!hopping && t > R.next) { startHop(spot(r.position.x, r.position.z, 1.2).setY(0), 0.32); R.next = t + rnd(2, 6); }
+          if (here && dist < ALERT) { R.mode = 'alert'; R.calm = 0; }
+          break;
+        case 'alert':
+          sitUp = 1; earsUp = 1;
+          if (!hopping) R.heading += Math.sign(angTo(R.heading, Math.atan2(dx, dz))) * Math.min(Math.abs(angTo(R.heading, Math.atan2(dx, dz))), 3 * dt);
+          R.calm = R.ps < 2.1 ? R.calm + dt : 0;
+          if (!here || dist > ALERT + 2) { R.mode = 'idle'; hush(); }
+          else if ((R.ps > FAST && dist < SPOOK) || (dist < CLOSE && t > R.tameUntil)) { hush(); flee(P.x, P.z); }
+          else if (canFeed()) say(TOUCH_UI ? '<b>Tap</b> to put down a carrot' : '<kbd>E</kbd> put down a carrot');
+          else hush();
+          break;
+        case 'approach': {
+          earsUp = 1;
+          if (!here || R.ps > FAST || Math.hypot(P.x - R.carrot.position.x, P.z - R.carrot.position.z) > 1.4) { flee(P.x, P.z); break; }
+          const L = Math.hypot(R.target.x - r.position.x, R.target.z - r.position.z);
+          if (L < 0.05 && !hopping) { R.mode = 'feed'; R.eat = 0; R.heading = Math.atan2(R.carrot.position.x - r.position.x, R.carrot.position.z - r.position.z); }
+          else if (!hopping) { const st = Math.min(L, 0.45); startHop(r.position.clone().add(V((R.target.x - r.position.x) / L * st, 0, (R.target.z - r.position.z) / L * st)), 0.3); }
+          break;
+        }
+        case 'feed':
+          nibble = 1; R.eat += dt; R.carrot.scale.setScalar(Math.max(0.08, 1 - R.eat / 3.5));
+          if (!here || R.ps > FAST) flee(P.x, P.z);
+          else if (R.eat > 3.5) {
+            scene.remove(R.carrot); R.carrot = null; R.fed++;
+            toast(R.fed === 1 ? 'The rabbit nibbled your carrot 🥕' : `The rabbit nibbled your carrot 🥕 — fed ${R.fed}×`);
+            R.mode = 'idle'; R.next = t + rnd(4, 8); R.tameUntil = t + 20; R.calm = 0;
+          }
+          break;
+        case 'flee': {                                   // quick zig-zag hops to a spot away from you
+          earsUp = 0.3;
+          const L = Math.hypot(R.target.x - r.position.x, R.target.z - r.position.z);
+          if (L < 0.3 && !hopping) { R.mode = 'idle'; R.next = t + rnd(2, 4); }
+          else if (!hopping) {
+            const st = Math.min(L, 0.9), ux = (R.target.x - r.position.x) / L, uz = (R.target.z - r.position.z) / L, side = (R.zig = -(R.zig || 1)) * 0.35 * Math.min(1, L / 2);
+            startHop(r.position.clone().add(V(ux * st - uz * side * st, 0, uz * st + ux * side * st)), 0.22);
+          }
+          break;
+        }
+      }
+      // pose: sit up (front rises), ears, nibbling, twitching
+      R.sit += (sitUp - R.sit) * Math.min(1, dt * 6);
+      pose.rotation.x = -0.55 * R.sit - (hopping ? 0.25 * Math.sin(Math.PI * R.hop) : 0);
+      head.rotation.x = 0.45 * R.sit + (nibble && !hopping ? 0.25 + Math.sin(t * 11) * 0.05 * (R.mode === 'feed' ? 2 : 1) : 0);
+      if (t > R.twitch) { R.twitch = t + rnd(0.8, 3); ears[Math.random() * 2 | 0].userData.flick = 1; }
+      ears.forEach((e, i) => { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 5);
+        e.rotation.set(-0.9 + 0.75 * earsUp + 0.3 * Math.sin(Math.PI * e.userData.flick), 0, (i ? -1 : 1) * (0.12 + 0.1 * (1 - earsUp))); });
+      r.rotation.y = R.heading;
+      const look = Math.cos(angTo(R.heading, Math.atan2(dx, dz)));
+      shineMat.opacity += ((night && dist < 14 ? THREE.MathUtils.smoothstep(look, 0.5, 0.9) : 0) - shineMat.opacity) * Math.min(1, dt * 5);
+    }
+    return { update, onE, R };
+  })();
 
   // ===== per-frame =====
   const _c = new THREE.Vector3();
@@ -6433,14 +6724,8 @@ life = (() => {
       const flap = Math.sin(t * 0.5 + b.ph) > -0.2 ? Math.sin(t * b.fl + b.ph) * 0.6 : 0.12;
       b.wl.rotation.z = flap; b.wr.rotation.z = -flap;
     }
-    if (t > deer.until) { deer.graze = !deer.graze; deer.until = t + (deer.graze ? rnd(4, 8) : rnd(2, 4)); }
-    deer.k += ((deer.graze ? 1 : 0) - deer.k) * Math.min(1, dt * 1.5);
-    deer.neck.rotation.x = THREE.MathUtils.lerp(0.6, 2.7, deer.k);                     // neck up (head high) ↔ down to the grass
-    deer.head.rotation.x = THREE.MathUtils.lerp(-0.3, -1.2, deer.k);                  // counters the neck tilt: head near level when up, muzzle down in the grass when grazing
-    deer.head.rotation.y = deer.graze ? Math.sin(t * 1.7) * 0.08 : Math.sin(t * 0.8) * 0.5; // nibbling / looking round
-    if (t > deer.twitch) { deer.twitch = t + rnd(1.5, 4); deer.ears[Math.random() * 2 | 0].userData.flick = 1; }
-    for (const e of deer.ears) { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 4); e.rotation.x = -0.2 - 0.5 * Math.sin(Math.PI * e.userData.flick); }
-    deer.tail.rotation.x = 0.41 + Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.4;             // lies on the rump, now and then flicks up (white side)
+    deerUpdate(t, dt);
+    rabbit.update(t, dt);
     if (fireflies.visible) {
       ff.forEach((f, i) => {
         ffPos.set([f.x + Math.sin(t * 0.3 * f.f + f.ph) * 0.8, f.y + Math.sin(t * 0.5 * f.f + f.ph * 2) * 0.3, f.z + Math.cos(t * 0.25 * f.f + f.ph) * 0.8], i * 3);
@@ -6487,7 +6772,7 @@ life = (() => {
   for (const r of rings) r.m.visible = false;
   let swim = 0, swimVol = 0;
   const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
-  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig };   // snd: debug handle (window.__perf.life.snd)
+  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R };   // snd: debug handle (window.__perf.life.snd)
 })();
 
 // ---------- HAMMOCK (per user: interaction). First person: walk up to the hammock and press E (or tap the prompt) to lie
@@ -6496,7 +6781,9 @@ life = (() => {
 hammock = (() => {
   const rig = life.hammock, hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
   const TOUCH = matchMedia('(pointer: coarse)').matches, osLeft = document.getElementById('osLeft');
-  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; }, hush = () => { hud.style.display = 'none'; };
+  // the #actHud pill is shared with the deer's apple prompt: only hide it if it's ours
+  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'hammock'; };
+  const hush = () => { if (hud.dataset.owner === 'hammock') { hud.style.display = 'none'; hud.dataset.owner = ''; } };
   const IN = TOUCH ? 'Lying in the hammock · <b>✕ Stand up</b> to get out' : 'Lying in the hammock · <kbd>E</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> stand up';
   const _p = new THREE.Vector3();
   let active = false, back = null;
@@ -6764,7 +7051,7 @@ document.getElementById('soundOn').addEventListener('change', e => life.setSound
 document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
 document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else hammock?.stop(); }); // stand up (touch has no Esc / WASD)
-document.getElementById('actHud').addEventListener('click', () => hammock?.onE()); // tap the pill = E
+document.getElementById('actHud').addEventListener('click', e => { const o = e.currentTarget.dataset.owner; if (o === 'deer') life.deerOnE(); else if (o === 'rabbit') life.rabbitOnE(); else hammock?.onE(); }); // tap the pill = E
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
 const viewLink = () => {
