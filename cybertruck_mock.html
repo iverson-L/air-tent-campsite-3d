@@ -71,7 +71,7 @@ function makeSunTexture(N = 512) {
 
   function addBeams(g, lamps, col = {}) {          // col: { light, beam, flare } colours (default: warm halogen)
   const beams = lamps.map(([x, y, z]) => {
-    const l = new THREE.SpotLight(col.light ?? 0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(x, y, z + 0.04);
+    const l = new THREE.SpotLight(col.light ?? 0xfff2dc, 0, 40, 0.62, 0.6, 2); l.position.set(x, y, z + 0.04);
     l.target.position.set(x * 1.3, 0, z + 14); g.add(l, l.target); l.visible = false; return l;
   });
   const beamGroup = new THREE.Group(); beamGroup.userData.dynamic = true; beamGroup.visible = false; g.add(beamGroup);
@@ -79,7 +79,8 @@ function makeSunTexture(N = 512) {
   coneGeo.translate(0, -BL / 2, 0);                                     // apex at the lamp
   { const pp = coneGeo.attributes.position, tA = new Float32Array(pp.count); for (let i = 0; i < pp.count; i++) tA[i] = -pp.getY(i) / BL;
     coneGeo.setAttribute('aT', new THREE.BufferAttribute(tA, 1)); }
-  coneGeo.rotateX(-Math.PI / 2 - 0.06);                                 // pointing ahead (+z), dipped a little
+  coneGeo.scale(col.wide ?? 1.7, 1, 1);                                  // per user: a wider beam side to side (an oval cone, not round)
+  coneGeo.rotateX(-Math.PI / 2 + 0.08);                                 // pointing ahead (+z), dipped toward the road (−π/2 − x tilted it UP, per user)
   const beamMat = new THREE.ShaderMaterial({
     uniforms: { uI: { value: 0 }, uC: { value: new THREE.Color(col.beam ?? 0xfff1d6) } },
     vertexShader: `attribute float aT; varying float vT; varying vec3 vN; varying vec3 vV;
@@ -93,7 +94,7 @@ function makeSunTexture(N = 512) {
   const flareMat = new THREE.SpriteMaterial({ map: makeSunTexture(128), color: col.flare ?? 0xfff4e0, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
   for (const [x, y, z] of lamps) {
     const cone = new THREE.Mesh(coneGeo, beamMat); cone.position.set(x, y, z); cone.renderOrder = 5; cone.frustumCulled = false; beamGroup.add(cone);
-    const fl = new THREE.Sprite(flareMat); fl.scale.setScalar(0.9); fl.position.set(x, y, z + 0.02); beamGroup.add(fl);
+    const fl = new THREE.Sprite(flareMat); fl.scale.setScalar(col.flareSize ?? 0.9); fl.position.set(x, y, z + 0.02); beamGroup.add(fl);
   }
   return { beams, beamGroup, beamMat, flareMat };
 }
@@ -370,8 +371,10 @@ function makeSunTexture(N = 512) {
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.03, 12), black); cap.rotation.z = Math.PI / 2; cap.position.x = 0.175; w.add(cap);
       wheels.push({ w, front: a > 0, sx, base: w.rotation.y });
     }
-    // headlights (per user): cool WHITE LED light, not warm halogen, coming from the outer ends of the light bar
-    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-1, 1].map(sx => [sx * (chamW(HL) - 0.04), topY(HL) - 0.036, HL + 0.03]), { light: 0xf2f6ff, beam: 0xeef4ff, flare: 0xf4f8ff });
+    // headlights (per user): cool WHITE LED light, not warm halogen, coming from the MIDDLE of the light bar's corner
+    // section (half way along each corner facet, at the bar's height there, just proud of the facet); a smaller glow
+    const hlY = topY(HL) - 0.036 + 0.5 * (topY(HL - CL + 0.02) - topY(HL));
+    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-1, 1].map(sx => [sx * (XN + 0.5 * CH + 0.03 * cnx), hlY, HL - 0.5 * CL + 0.03 * cnz]), { light: 0xf2f6ff, beam: 0xeef4ff, flare: 0xf4f8ff, flareSize: 0.5 });
     g.position.set(TRUCK_AT[0], 0, TRUCK_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
