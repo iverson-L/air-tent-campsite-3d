@@ -157,15 +157,20 @@
   .dim-label.big { font-size: 13px; font-weight: 700; background: rgba(47,111,181,.88); }
 
   /* on-screen controls (remote / AnyDesk) */
-  #osControls { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+  #osControls { position: fixed; inset: 0; pointer-events: none; z-index: 9; } /* under the panel (10), so an open panel stays usable */
   #osLeft { position: absolute; left: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: auto; }
   .osBtn { width: 68px; height: 68px; border-radius: 14px; border: 2px solid rgba(255,255,255,.5); background: rgba(20,20,20,.45); color: #fff; font-size: 22px; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; }
   .osBtn.held { background: rgba(80,140,255,.6); border-color: #fff; }
   #osRun { width: 68px; height: 36px; font-size: 13px; border-radius: 10px; }
   #joy { position: relative; width: 150px; height: 150px; border-radius: 50%; background: rgba(20,20,20,.35); border: 2px solid rgba(255,255,255,.4); touch-action: none; }
   #joyKnob { position: absolute; width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,.35); left: 50%; top: 50%; transform: translate(-50%,-50%); pointer-events: none; }
-  #osLook { position: absolute; right: 24px; bottom: 24px; width: 150px; height: 150px; border-radius: 50%; background: rgba(20,20,20,.35); border: 2px solid rgba(255,255,255,.4); touch-action: none; pointer-events: auto; }
-  #osKnob { position: absolute; width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,.35); left: 50%; top: 50%; transform: translate(-50%,-50%); pointer-events: none; }
+  /* look: drag anywhere on the right half (per user: the old rate stick felt bad); the ring is only a hint / touch marker */
+  #lookZone { position: absolute; right: 0; top: 0; bottom: 0; width: 50%; pointer-events: auto; touch-action: none; }
+  #osLook { position: absolute; right: 24px; bottom: 24px; width: 120px; height: 120px; margin: 0; border-radius: 50%; border: 2px dashed rgba(255,255,255,.45);
+    background: rgba(20,20,20,.18); pointer-events: none; display: grid; place-items: center; transition: opacity .2s; }
+  #osLook span { font: 600 11px/1.2 system-ui, sans-serif; color: rgba(255,255,255,.75); text-align: center; text-transform: uppercase; letter-spacing: .06em; }
+  #osLook.active { border-style: solid; background: rgba(255,255,255,.12); right: auto; bottom: auto; width: 84px; height: 84px; transform: translate(-50%,-50%); }
+  #osLook.active span { display: none; }
 
   /* debug view-direction readout */
   #dbgInfo { position: fixed; top: 12px; right: 12px; z-index: 40; background: rgba(20,22,26,.8); color: #7fd4ff; font: 13px/1.4 monospace; padding: 6px 10px; border-radius: 8px; display: none; pointer-events: none; }
@@ -238,7 +243,7 @@
     <button id="osRun" class="osBtn">WALK</button>
     <div id="joy"><div id="joyKnob"></div></div>
   </div>
-  <div id="osLook"><div id="osKnob"></div></div>
+  <div id="lookZone"><div id="osLook"><span>drag to look</span></div></div>
 </div>
 <div id="app"></div>
 <div id="fishHud"></div>
@@ -545,8 +550,9 @@ joy.addEventListener('pointermove', e => {
   const len = Math.hypot(dx, dy);
   if (len > JOY_MAX) { dx *= JOY_MAX / len; dy *= JOY_MAX / len; }
   joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-  joyInput.f = -dy / JOY_MAX; // stick up = forward
-  joyInput.s = dx / JOY_MAX;  // stick right = strafe right
+  const dz = len < 6 ? 0 : 1;  // small dead zone: a resting thumb doesn't creep
+  joyInput.f = -dy / JOY_MAX * dz; // stick up = forward
+  joyInput.s = dx / JOY_MAX * dz;  // stick right = strafe right
 });
 const joyEnd = e => {
   if (e.pointerId !== joyPid) return;
@@ -564,37 +570,37 @@ osRun.addEventListener('click', () => {
   osRun.classList.toggle('held', keys.shift);
 });
 
-// look pad: analog view stick — push to rotate (speed ∝ deflection), release to stop.
-// Same spring behaviour as the movement joystick (#joy): knob follows the finger,
-// radially clamped, and snaps back to centre on release.
+// look (per user: the analog rate stick felt bad): drag anywhere on the right half of the screen and the view follows
+// the finger 1:1, like mobile games. 3.2 rad per screen-short-side of drag; drag right → turn right, up → look up.
+// A ring marks the touch point. A mouse click without dragging still enters pointer-lock mouse look (AnyDesk).
+const lookZone = document.getElementById('lookZone');
 const osLook = document.getElementById('osLook');
-const osKnob = document.getElementById('osKnob');
-const lookInput = { f: 0, s: 0 }; // -1..1
-let lookPid = null;
-const LOOK_MAX = 50; // px of travel for full rotation speed
-osLook.addEventListener('pointerdown', e => {
-  lookPid = e.pointerId;
-  osLook.setPointerCapture(lookPid);
+const _lookEul = new THREE.Euler(0, 0, 0, 'YXZ');
+let lookPid = null, lookLast = null, lookMoved = 0;
+lookZone.addEventListener('pointerdown', e => {
+  if (lookPid !== null) return;
+  lookPid = e.pointerId; lookLast = { x: e.clientX, y: e.clientY }; lookMoved = 0;
+  try { lookZone.setPointerCapture(lookPid); } catch {}   // keeps the drag even when the finger leaves the zone
+  const r = lookZone.getBoundingClientRect();
+  osLook.classList.add('active'); osLook.style.left = (e.clientX - r.left) + 'px'; osLook.style.top = (e.clientY - r.top) + 'px';
 });
-osLook.addEventListener('pointermove', e => {
+lookZone.addEventListener('pointermove', e => {
   if (e.pointerId !== lookPid) return;
-  const r = osLook.getBoundingClientRect();
-  let dx = e.clientX - (r.x + r.width / 2);
-  let dy = e.clientY - (r.y + r.height / 2);
-  const len = Math.hypot(dx, dy);
-  if (len > LOOK_MAX) { dx *= LOOK_MAX / len; dy *= LOOK_MAX / len; }
-  osKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-  lookInput.f = -dy / LOOK_MAX; // stick up = look up
-  lookInput.s = dx / LOOK_MAX;  // stick right = look right
+  const dx = e.clientX - lookLast.x, dy = e.clientY - lookLast.y, k = 3.2 / Math.min(innerWidth, innerHeight);
+  lookLast = { x: e.clientX, y: e.clientY }; lookMoved += Math.abs(dx) + Math.abs(dy);
+  _lookEul.setFromQuaternion(camera.quaternion);
+  _lookEul.y -= dx * k;
+  _lookEul.x = Math.max(-1.45, Math.min(1.45, _lookEul.x - dy * k));
+  camera.quaternion.setFromEuler(_lookEul);
 });
 const lookEnd = e => {
   if (e.pointerId !== lookPid) return;
   lookPid = null;
-  osKnob.style.transform = 'translate(-50%,-50%)';
-  lookInput.f = 0; lookInput.s = 0;
+  osLook.classList.remove('active'); osLook.style.left = osLook.style.top = '';
+  if (e.type === 'pointerup' && e.pointerType === 'mouse' && lookMoved < 6 && walking && !fpControls.isLocked) fpControls.lock();
 };
-osLook.addEventListener('pointerup', lookEnd);
-osLook.addEventListener('pointercancel', lookEnd);
+lookZone.addEventListener('pointerup', lookEnd);
+lookZone.addEventListener('pointercancel', lookEnd);
 
 // ---------- lights ----------
 const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x5a7248, 0.85);
@@ -6827,13 +6833,6 @@ renderer.setAnimationLoop(() => {
       const dist = (keys.shift ? 2 : 4) * dt * Math.min(len, 1) * pondSpeed; // m/s — run by default, Shift = walk; slower in water
       fpControls.moveForward((f / len) * dist);
       fpControls.moveRight((s / len) * dist);
-    }
-    // analog look stick → continuous yaw/pitch while deflected
-    if (lookInput.s !== 0 || lookInput.f !== 0) {
-      const LOOK_RATE = 2.0; // rad/s at full deflection
-      yaw -= lookInput.s * LOOK_RATE * dt;
-      pitch = Math.max(-1.45, Math.min(1.45, pitch + lookInput.f * LOOK_RATE * dt));
-      camera.rotation.set(pitch, yaw, 0, 'YXZ');
     }
     // eye level — C ducks (smooth), Space jumps with simple gravity
     let targetH = keys.duck ? DUCK_H : EYE_H;
