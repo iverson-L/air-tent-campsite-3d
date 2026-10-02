@@ -824,7 +824,9 @@ grassTex.repeat.set(90 / TILE_M, 90 / TILE_M);
 // pond (per user) in the open grass left of the site: an organic blob outline (world x/z, ≈ 9 × 7 m). The grass gets a
 // HOLE there so the basin below can be seen through the clear water (see the pond section further down).
 const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 1.8, // 1.8 m in the middle: deep enough to swim (per user)
-  fishA: -0.12 };                                  // bank angle of the fishing spot (east bank, facing the camp side)
+  fishA: -0.52 };                                  // bank angle of the fishing spot (east bank). Per user: at −0.12 the string-light
+                                                    // anchor tree's canopy hung 0.1 m off the stool and filled the view when the catch was lifted; here every fixed
+                                                    // tree's canopy is ≥ 2.2 m away and none is in front
 // fixed spots for the camp-life props (per user), kept clear of the random trees
 const HAMMOCK = { a: [-12.5, -6.0], b: [-12.5, -2.2] };   // the two broadleaf trees the hammock hangs between
 const SUV_AT = [13.8, -2.5], DEER_AT = [-15.5, -11.0];
