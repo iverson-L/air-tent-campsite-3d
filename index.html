@@ -71,7 +71,7 @@
 
   /* phones: the keyboard hint is useless on touch (on-screen pads instead); narrow windows wrap it */
   @media (pointer: coarse) { #walkHint { display: none !important; } }
-  @media (max-width: 900px) { body #walkHint, body #fishHud { left: 12px; right: 12px; transform: none; width: fit-content; margin: 0 auto; white-space: normal; text-align: center; box-sizing: border-box; line-height: 1.7; } }
+  @media (max-width: 900px) { body #walkHint, body #fishHud, body #actHud { left: 12px; right: 12px; transform: none; width: fit-content; margin: 0 auto; white-space: normal; text-align: center; box-sizing: border-box; line-height: 1.7; } }
   /* toast (copied link, saved photo) */
   #toast { position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%) translateY(8px); z-index: 60; padding: 8px 14px; border-radius: 999px;
     background: rgba(20,22,26,.85); color: #fff; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; }
@@ -146,6 +146,9 @@
   /* fishing prompt / status pill (tap = E) */
   #fishHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
     background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
+  #actHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
+    background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
+  #actHud kbd,
   #fishHud kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.18); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
   #fishExit { position: fixed; right: 16px; top: 16px; z-index: 31; display: none; font: 600 14px/1 system-ui, sans-serif; color: #f3f4f6;
     background: rgba(20,22,26,.80); border: 0; border-radius: 999px; padding: 11px 16px; cursor: pointer; } /* touch has no Esc/WASD */
@@ -247,6 +250,7 @@
 </div>
 <div id="app"></div>
 <div id="fishHud"></div>
+<div id="actHud"></div>
 <button id="fishExit" type="button">✕ Stand up</button>
 <div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck / dive in the pond · <kbd>E</kbd> fish (at the stool) · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release</div>
 
@@ -374,6 +378,7 @@ let jumpVy = 0, grounded = true;
 const fpControls = new PointerLockControls(camera, renderer.domElement);
 const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false };
 let fishing = null; // the pond's fishing spot (set up with the pond; E to fish)
+let hammock = null; // lying in the hammock (E, set up after camp life)
 let life = null;    // camp life: grass, props, wildlife, fireflies, rain, sound (set up after the tents)
 let raining = false;
 // a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
@@ -384,8 +389,9 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) relea
 window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) { if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys(); return; }
   // E → fishing (sit down / cast / strike); moving or Esc stands you up again
-  if (e.code === 'KeyE' && !e.repeat) fishing?.onE();
+  if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } fishing?.onE(); hammock?.onE(); }
   if (fishing?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape'].includes(e.code)) { fishing.stop(); return; }
+  if (hammock?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape', 'Space'].includes(e.code)) { hammock.stop(); return; }
   if (e.code === 'KeyW') keys.w = true;
   if (e.code === 'KeyA') keys.a = true;
   if (e.code === 'KeyS') keys.s = true;
@@ -472,6 +478,7 @@ function exitWalk() {
 }
 walkBtn.addEventListener('click', () => {
   if (fishing?.active) fishing.stop();       // (bug sweep) stand up from the fishing stool first, then switch modes
+  if (hammock?.active) hammock.stop();
   walking ? exitWalk() : enterWalk();
 });
 // desktop: click the scene while walking → pointer lock for mouse look.
@@ -4274,18 +4281,25 @@ const skyGroup = new THREE.Group(); skyGroup.userData.dynamic = true;
 scene.add(skyGroup);
 skyGroup.add(new THREE.Mesh(new THREE.SphereGeometry(170, 32, 16), skyMat));
 
-function makeRadialTex(stops, size = 256) {
-  const c = document.createElement('canvas'); c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  for (const [o, col] of stops) g.addColorStop(o, col);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(c);
+// sun (per user: pixelated artefacts): the 256 px canvas radial gradient banded into rings (8-bit alpha) and its fully
+// transparent edge lost its colour, so filtering drew a dark fringe. Now computed per pixel like the clouds: a bright
+// disc with a soft rim inside a warm glow, ±½-step dithered, colour defined everywhere, mipmapped.
+function makeSunTexture(N = 512) {
+  const data = new Uint8Array(N * N * 4), sm = THREE.MathUtils.smoothstep;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const r = Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2);           // 0 centre … 1 edge
+    const core = 1 - sm(r, 0.13, 0.19);                                         // the disc, soft-rimmed
+    const glow = 0.85 * Math.exp(-((r / 0.33) ** 2)) * (1 - sm(r, 0.8, 1));     // halo, exactly 0 at the border
+    const a = core + glow * (1 - core), k = (y * N + x) * 4;
+    data[k] = 255; data[k + 1] = Math.round(240 + 12 * core); data[k + 2] = Math.round(200 + 34 * core);  // warm glow → near-white disc
+    data[k + 3] = Math.max(0, Math.min(255, Math.round(a * 255 + Math.random() - 0.5)));
+  }
+  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  t.colorSpace = THREE.SRGBColorSpace; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
 }
-const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-  map: makeRadialTex([[0, 'rgba(255,248,224,1)'], [0.25, 'rgba(255,240,200,0.9)'], [1, 'rgba(255,240,200,0)']]),
-  depthWrite: false, fog: false,
-}));
+const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeSunTexture(), transparent: true, depthWrite: false, fog: false }));
 sunSprite.scale.set(38, 38, 1);
 sunSprite.position.copy(sun.position).normalize().multiplyScalar(150); // the visible sun sits where the shadows come from
 skyGroup.add(sunSprite);
@@ -5985,6 +5999,7 @@ life = (() => {
     scene.add(stems, heads);
   }
 
+  let hammockRig = null;                                    // the hammock's rocking rig (for lying in it, E)
   // ===== hammock between its two broadleaf trees (striped canvas sling, ropes round the trunks) =====
   {
     const [ax, az] = HAMMOCK.a, [bx, bz] = HAMMOCK.b, L = Math.hypot(bx - ax, bz - az);
@@ -5993,13 +6008,19 @@ life = (() => {
     const stripes = canvasTex(256, 64, (x, w, h) => { const cols = ['#e8dcc0', '#c4572e', '#e8dcc0', '#2f6f73', '#e8dcc0', '#d9a441'];
       for (let i = 0; i < 12; i++) { x.fillStyle = cols[i % cols.length]; x.fillRect(0, i * h / 12, w, h / 12 + 1); } });
     const z0 = 0.75, z1 = L - 0.75, ENDY = 1.18;
-    g.add(sling((u, v, o) => {
+    // sling + hang ropes rock about the line between the rope ends (1.55 m up); the trunk wraps stay put
+    const pivot = new THREE.Group(); pivot.position.y = 1.55; pivot.userData.dynamic = true; g.add(pivot);
+    const swing = new THREE.Group(); swing.position.y = -1.55; pivot.add(swing);
+    swing.add(sling((u, v, o) => {
       const z = z0 + (z1 - z0) * u, w = 0.06 + 0.45 * Math.sin(Math.PI * u) ** 0.6;       // gathered at the ends
       const x = (v - 0.5) * 2 * w;
       o.set(x, ENDY - 0.55 * Math.sin(Math.PI * u) - 0.12 * (1 - (2 * v - 1) ** 2) * Math.sin(Math.PI * u), z);
     }, 24, 8, new THREE.MeshStandardMaterial({ map: stripes, roughness: 0.95, side: THREE.DoubleSide })));
     const rope = new THREE.MeshStandardMaterial({ color: 0xd8cbb0, roughness: 1 });
-    for (const [zt, zh] of [[0.26, z0], [L - 0.26, z1]]) g.add(bentTube([V(0, 1.55, zt), V(0, ENDY, zh)], 0.008, rope));
+    for (const [zt, zh] of [[0.26, z0], [L - 0.26, z1]]) swing.add(bentTube([V(0, 1.55, zt), V(0, ENDY, zh)], 0.008, rope));
+    // lying-in eye: head toward tree a (u 0.3 along the sling, ~0.2 m above its low line), looking toward the feet
+    const eye = new THREE.Object3D(); eye.position.set(0, ENDY - 0.67 * Math.sin(Math.PI * 0.3) + 0.2, z0 + (z1 - z0) * 0.3); swing.add(eye);
+    hammockRig = { g, pivot, eye, mid: V((ax + bx) / 2, 0, (az + bz) / 2), yaw: g.rotation.y + Math.PI, occupied: false, amp: 0.012 };
     for (const zt of [0.0, L]) {                                                          // rope wrap round each trunk
       const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.012, 6, 20), rope); wrap.rotation.x = Math.PI / 2; wrap.position.set(0, 1.55, zt); g.add(wrap);
     }
@@ -6145,7 +6166,9 @@ life = (() => {
       part(new THREE.CylinderGeometry(0.03, 0.04, 0.1, 10), M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.15, 0.14).rotation.x = 0.3; // neck
       part(duckBall, M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.21, 0.16, 0.05, 0.05, 0.06);              // head
       part(new THREE.BoxGeometry(0.035, 0.012, 0.06), M(drake ? 0xe0b630 : 0xc0853a), 0, 0.2, 0.225); // beak
-      if (drake) part(new THREE.TorusGeometry(0.034, 0.006, 6, 14), M(0xf2f2f2), 0, 0.165, 0.14).rotation.x = Math.PI / 2 - 0.3; // neck ring
+      // neck ring: a thin white collar round the neck, its axis along the neck (tilted 0.3 forward) — it was tilted the
+      // other way and cut across the neck (per user)
+      if (drake) part(new THREE.TorusGeometry(0.0345, 0.0042, 6, 20), M(0xf2f2f2), 0, 0.15 + 0.02 * Math.cos(0.3), 0.14 + 0.02 * Math.sin(0.3)).rotation.x = -(Math.PI / 2 - 0.3);
       for (const sx of [-1, 1]) part(duckEye, M(0x0b0b0c), sx * 0.04, 0.225, 0.19);
       scene.add(d);
       return d;
@@ -6390,6 +6413,7 @@ life = (() => {
   function update(t, dt) {
     if (started) { swimVol += (swim * 0.3 - swimVol) * Math.min(1, dt * 6); snd.water.setVolume(swimVol < 0.003 ? 0 : swimVol); } // swish fades in/out with movement
     for (const tw of towels) tw.rotation.x = Math.sin(t * 1.3 + tw.position.x) * 0.06 + (rain ? 0.02 : 0);
+    { const h = hammockRig; h.amp += ((h.occupied ? 0.045 : 0.012) - h.amp) * Math.min(1, dt); h.pivot.rotation.z = h.amp * Math.sin(t * 0.9); } // rocking
     for (const s of steam) {                                     // kettle steam wisps
       const u = ((t / 3) + s.t0) % 1;
       s.sp.position.set(0.04 + u * 0.15, 0.93 + u * 0.7, Math.sin(t + s.t0 * 6) * 0.05);
@@ -6463,7 +6487,43 @@ life = (() => {
   for (const r of rings) r.m.visible = false;
   let swim = 0, swimVol = 0;
   const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
-  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd };   // snd: debug handle (window.__perf.life.snd)
+  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig };   // snd: debug handle (window.__perf.life.snd)
+})();
+
+// ---------- HAMMOCK (per user: interaction). First person: walk up to the hammock and press E (or tap the prompt) to lie
+// back in it — the sling rocks, the view rides with it and stays free to look round (mouse lock / drag on the right
+// half). E, WASD, Esc or the ✕ Stand up button gets you out, back on your feet beside it. A camper lying there moves off.
+hammock = (() => {
+  const rig = life.hammock, hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
+  const TOUCH = matchMedia('(pointer: coarse)').matches, osLeft = document.getElementById('osLeft');
+  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; }, hush = () => { hud.style.display = 'none'; };
+  const IN = TOUCH ? 'Lying in the hammock · <b>✕ Stand up</b> to get out' : 'Lying in the hammock · <kbd>E</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> stand up';
+  const _p = new THREE.Vector3();
+  let active = false, back = null;
+  const near = () => walking && Math.hypot(camera.position.x - rig.mid.x, camera.position.z - rig.mid.z) < 2.0;
+  function start() {
+    if (active) return;
+    active = true; rig.occupied = true; campers.leaveHammock?.();
+    back = camera.position.clone();
+    releaseKeys(); walkHint.style.display = 'none'; osLeft.style.visibility = 'hidden'; exitBtn.style.display = 'block';
+    rig.eye.getWorldPosition(camera.position);
+    camera.rotation.set(0.38, rig.yaw, 0, 'YXZ');            // lie back: looking along the hammock, up into the canopy
+    say(IN);
+  }
+  function stop() {
+    if (!active) return;
+    active = false; rig.occupied = false; hush(); exitBtn.style.display = 'none'; osLeft.style.visibility = '';
+    camera.position.copy(back); camera.position.y = EYE_H;   // back on your feet where you stood
+    camera.rotation.set(0, camera.rotation.y, 0, 'YXZ');
+    walkHint.style.display = 'block';
+  }
+  function onE() { if (active) stop(); else if (near() && !fishing?.active) start(); }
+  function update() {
+    if (active) { rig.eye.getWorldPosition(_p); camera.position.copy(_p); return; }  // ride the rocking sling
+    if (near() && !fishing?.active) say(TOUCH ? '<b>Tap</b> to lie in the hammock' : '<kbd>E</kbd> lie in the hammock');
+    else if (hud.style.display !== 'none') hush();
+  }
+  return { update, onE, start, stop, get active() { return active; } };
 })();
 
 // ---------- CAMPERS (per user — "see people moving around", GitHub-Pages only, so they're simulated, not online
@@ -6563,7 +6623,7 @@ const campers = (() => {
   });
   const nearestNode = v => Object.keys(N).reduce((b, k) => (N[k].distanceTo(v) < N[b].distanceTo(v) ? k : b), 'f0');
   function choose(c) {
-    const pool = SPOTS.filter(s => !busy.has(s) && (raining ? s.rain : !s.rain));
+    const pool = SPOTS.filter(s => !busy.has(s) && (raining ? s.rain : !s.rain) && !(s.pose === 'lie' && life.hammock.occupied));
     if (!pool.length) return;
     const w = pool.map(s => (s.fire && isNight ? 4 : 1) * (s.long ? 0.5 : 1));
     let r = Math.random() * w.reduce((a, b) => a + b), k = 0;
@@ -6636,7 +6696,8 @@ const campers = (() => {
     }
     wasRaining = rainNow;
   }
-  return { update, setOn };
+  const leaveHammock = () => { for (const c of people) if (c.spot?.pose === 'lie') choose(c); };   // the player lies down
+  return { update, setOn, leaveHammock };
 })();
 
 function layoutTents() {
@@ -6702,7 +6763,8 @@ document.getElementById('rainOn').addEventListener('change', e => { raining = e.
 document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
 document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
-document.getElementById('fishExit').addEventListener('click', () => fishing.stop()); // stand up (touch has no Esc / WASD)
+document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else hammock?.stop(); }); // stand up (touch has no Esc / WASD)
+document.getElementById('actHud').addEventListener('click', () => hammock?.onE()); // tap the pill = E
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
 const viewLink = () => {
@@ -6849,9 +6911,12 @@ renderer.setAnimationLoop(() => {
   adaptResolution();
   swimMove = 0;                               // set below only while walking AND moving in the pond
   fishing?.update(dt);                        // fishing spot: prompt, cast/bite/reel, seated camera
+  hammock?.update();                          // hammock: prompt, or ride the rocking sling while lying in it
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
   if (fishing?.active) {
     // sitting on the fishing stool: the fishing spot drives the camera
+  } else if (hammock?.active) {
+    // lying in the hammock: position rides the sling (hammock.update); mouse lock / drag-to-look still turn the view
   } else if (walking) {
     // sync view angles from the camera: pointer-lock mouse look writes to it
     // directly between frames, so the look pad continues from where the mouse left off
