@@ -919,7 +919,7 @@ scene.add(ground);
   const pp = ring.attributes.position, uv = ring.attributes.uv;
   for (let i = 0; i < pp.count; i++) { const x = pp.getX(i), z = pp.getZ(i); pp.setY(i, groundH(x, z)); uv.setXY(i, x / 90 + 0.5, -z / 90 + 0.5); }
   ring.computeVertexNormals();
-  const hills = new THREE.Mesh(ring, ground.material); hills.receiveShadow = true; scene.add(hills);
+  const hills = new THREE.Mesh(ring, ground.material); hills.receiveShadow = true; hills.userData.ground = true; scene.add(hills);
 }
 // the dirt track: a ribbon along each curve, a tyre-rutted dirt texture repeating every 6 m. Soft border (per user): the
 // ribbon runs 1 m past the 6 m road on each side and an alpha map feathers it into the grass with a wavy, grainy edge
@@ -961,7 +961,7 @@ scene.add(ground);
     }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
     geo.setIndex(idx); geo.computeVertexNormals(); if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
-    const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; m.renderOrder = order; scene.add(m);
+    const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; m.renderOrder = order; m.userData.ground = true; scene.add(m);   // ground: never a collision box
   };
   ribbon(TRACK.draw.stub, 0.01, false, 0); ribbon(TRACK.pts[0], 0.012, true, 1); ribbon(TRACK.pts[2], 0.014, false, 2); ribbon(TRACK.pts[3], 0.014, false, 3);   // every piece its own order: equal orders sort by distance and flip-flopped (per user)
   ribbon(TRACK.draw.spur, 0.016, false, 4, 2.5);   // the spur fades in where it starts by the parked vehicles
@@ -7620,7 +7620,7 @@ car = (() => {
     obstacles = { boxes: [], trees: [] };
     const b = new THREE.Box3();
     for (const o of scene.children) {
-      if (rigs.some(r => r.g === o) || o.isLight || o.isInstancedMesh || !o.visible || o.userData.dynamic) continue;   // vehicles are checked live
+      if (rigs.some(r => r.g === o) || o.isLight || o.isInstancedMesh || !o.visible || o.userData.dynamic || o.userData.ground) continue;   // vehicles are checked live; track ribbons are ground (on the hills the short junction pieces rose over 0.3 m and became invisible walls)
       b.setFromObject(o); if (b.isEmpty()) continue;
       const sx = b.max.x - b.min.x, sz = b.max.z - b.min.z, h = b.max.y - Math.max(0, b.min.y);
       if (sx > 20 || sz > 20 || h < 0.3 || b.min.y > 1.8) continue;     // ground, grass, rugs, the pond surface, things overhead
