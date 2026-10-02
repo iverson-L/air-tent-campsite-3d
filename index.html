@@ -4288,26 +4288,57 @@ sunSprite.scale.set(38, 38, 1);
 sunSprite.position.copy(sun.position).normalize().multiplyScalar(150); // the visible sun sits where the shadows come from
 skyGroup.add(sunSprite);
 
-function makeCloudTexture() {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
-  const ctx = c.getContext('2d');
-  for (let i = 0; i < 9; i++) {
-    const x = 40 + Math.random() * 176, y = 45 + Math.random() * 40, r = 22 + Math.random() * 30;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(255,255,255,0.85)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+// clouds (per user: pixelated artefacts): the old 256×128 canvas sprite was stretched over 35–65 m, its 8-bit alpha
+// gradients banded into visible steps, and fully transparent canvas pixels lose their colour (premultiplied), so the
+// filtering pulled dark fringes into the edges. Now: a smooth density field (sum of gaussian puffs over a flat-ish
+// cumulus base), alpha = 1 − e^(−density), ±½-step dithered, uploaded as raw RGBA with the colour defined everywhere
+// (white tops → slightly grey-blue undersides), mipmapped. Three different shapes.
+function makeCloudTexture(W = 512, H = 256) {
+  const dens = new Float32Array(W * H), base = H * (0.74 + Math.random() * 0.05);
+  const puff = (cx, cy, r, w) => {
+    const r2 = 2 * r * r, x0 = Math.max(0, cx - 3 * r | 0), x1 = Math.min(W - 1, cx + 3 * r | 0), y0 = Math.max(0, cy - 3 * r | 0), y1 = Math.min(H - 1, cy + 3 * r | 0);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const dx = x - cx, dy = y - cy; dens[y * W + x] += w * Math.exp(-(dx * dx + dy * dy) / r2); }
+  };
+  const n = 6 + (Math.random() * 4 | 0);
+  for (let i = 0; i < n; i++) {                                       // rounded heads, tallest in the middle
+    const u = (i + 0.5) / n, hump = Math.sin(Math.PI * u), cx = W * (0.16 + 0.68 * u + (Math.random() - 0.5) * 0.05);
+    const r = H * (0.07 + 0.09 * hump + Math.random() * 0.025), cy = base - r * (0.5 + 1.3 * hump);
+    puff(cx, cy, r, 1);
+    for (let k = 0; k < 5; k++) {                                     // cauliflower lumps round its upper half
+      const a = Math.PI * (1.15 + 0.7 * Math.random());
+      puff(cx + Math.cos(a) * r * 0.75, cy + Math.sin(a) * r * 0.75, r * (0.35 + 0.2 * Math.random()), 0.9);
+    }
   }
-  return new THREE.CanvasTexture(c);
+  for (let i = 0; i < 18; i++) {                                      // small lumps along the body for a broken edge
+    const u = Math.random(), r = H * (0.025 + Math.random() * 0.03);
+    puff(W * (0.1 + 0.8 * u), base - r * 0.8 - H * Math.random() * 0.2 * Math.sin(Math.PI * u), r, 0.7);
+  }
+  const data = new Uint8Array(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const flat = THREE.MathUtils.smoothstep(base + H * 0.04 - y, 0, H * 0.07);    // flat underside
+    const shade = 0.8 + 0.2 * THREE.MathUtils.smoothstep(base - y, 0, H * 0.45);  // grey-blue base → white tops
+    const row = (H - 1 - y) * W;                                      // DataTexture rows run bottom-up
+    for (let x = 0; x < W; x++) {
+      const a = (1 - Math.exp(-dens[y * W + x] * 3.4)) * flat
+        * THREE.MathUtils.smoothstep(Math.min(x, W - 1 - x, y, H - 1 - y), 0, 6);  // fade to 0 at the texture border
+      const k = (row + x) * 4;
+      data[k] = 255 * shade * 0.97; data[k + 1] = 255 * shade * 0.985; data[k + 2] = 255 * Math.min(1, shade * 1.02);
+      data[k + 3] = Math.max(0, Math.min(255, Math.round(a * 255 + Math.random() - 0.5)));   // dithered: no banding steps
+    }
+  }
+  const t = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  t.colorSpace = THREE.SRGBColorSpace; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.anisotropy = 4; t.needsUpdate = true;
+  return t;
 }
-const cloudMat = new THREE.SpriteMaterial({ map: makeCloudTexture(), transparent: true, opacity: 0.85, depthWrite: false, fog: false });
+const cloudMats = [0, 1, 2].map(() => new THREE.SpriteMaterial({ map: makeCloudTexture(), transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
+const setCloudOpacity = o => { for (const m of cloudMats) m.opacity = o; };
 const clouds = [];
 for (let i = 0; i < 6; i++) {
-  const cl = new THREE.Sprite(cloudMat);
+  const cl = new THREE.Sprite(cloudMats[i % 3]);
   const a = Math.random() * Math.PI * 2, r = 90 + Math.random() * 50;
   cl.position.set(Math.cos(a) * r, 45 + Math.random() * 30, Math.sin(a) * r);
-  cl.scale.set(35 + Math.random() * 30, 12 + Math.random() * 8, 1);
+  const w = 40 + Math.random() * 30; cl.scale.set(w, w * 0.5, 1);    // texture is 2:1 — keep the puffs round
   skyGroup.add(cl); clouds.push(cl);
 }
 
@@ -5794,7 +5825,7 @@ function setNight(on) {
   wasUnder = null;                            // re-apply the underwater fog next frame if diving
   sunSprite.visible = !on;
   stars.visible = on;
-  cloudMat.opacity = on ? 0.15 : 0.85;
+  setCloudOpacity(on ? 0.15 : 0.85);
   sun.intensity = on ? 0.35 : 1.6;          // moonlight
   sun.color.set(on ? 0x9db4ff : 0xfff2d9);
   hemi.intensity = on ? 0.25 : 0.85;
@@ -5812,7 +5843,7 @@ function applyWeather() {
   wasUnder = null;                            // the underwater fog re-applies itself next frame if diving
   sun.intensity = (isNight ? 0.35 : 1.6) * (raining ? 0.3 : 1);
   hemi.intensity = (isNight ? 0.25 : 0.85) * (raining ? 0.9 : 1);
-  cloudMat.opacity = raining ? 1 : (isNight ? 0.15 : 0.85);
+  setCloudOpacity(raining ? 1 : (isNight ? 0.15 : 0.85));
   skyMat.color.set(raining ? (isNight ? 0x6b7280 : 0x9aa2ab) : 0xffffff);
   sunSprite.visible = !isNight && !raining;
   life?.setWeather(raining);
