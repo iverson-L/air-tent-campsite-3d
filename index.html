@@ -6913,11 +6913,6 @@ life = (() => {
       const pulse = Math.pow(0.5 + 0.5 * Math.sin(2 * Math.PI * f * 2 * t), 6);
       lp += 0.25 * ((Math.random() * 2 - 1) - lp);
       d[i] = 0.5 * Math.sin(2 * Math.PI * f * t) + 0.3 * Math.sin(2 * Math.PI * f * 2 * t + 1) + 0.6 * pulse * (0.6 + 0.4 * lp) + 0.15 * lp; } }),
-    // the Cybertruck (per user: no engine — an electric motor): a soft motor whine (a 180 Hz tone with two harmonics,
-    // gently wavering) over a little road hiss. Its pitch (playback rate) and volume rise with speed; ~silent at rest.
-    motor: buf(1, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR, f = 180 * (1 + 0.004 * Math.sin(2 * Math.PI * 3 * t));
-      lp += 0.06 * ((Math.random() * 2 - 1) - lp);
-      d[i] = 0.5 * Math.sin(2 * Math.PI * f * t) + 0.22 * Math.sin(2 * Math.PI * 2 * f * t + 0.5) + 0.1 * Math.sin(2 * Math.PI * 3 * f * t + 1) + 0.9 * lp; } }),
     horn: buf(0.55, (d, n) => { for (let i = 0; i < n; i++) { const t = i / SR, env = Math.min(1, t / 0.02) * Math.min(1, (0.55 - t) / 0.05);
       const sq = f => Math.tanh(4 * Math.sin(2 * Math.PI * f * t)); d[i] = env * (0.5 * sq(415) + 0.5 * sq(523)); } }),
     door: buf(0.3, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR; lp += 0.12 * ((Math.random() * 2 - 1) - lp);
@@ -6945,16 +6940,66 @@ life = (() => {
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
     snort: pos(bufs.snort, V(0, 1.2, 0.7), 6, deer.g),
     engine: pos(bufs.engine, V(0, 0.9, 1.4), 4, carRig.g), horn: pos(bufs.horn, V(0, 0.9, 2.1), 8, carRig.g), door: pos(bufs.door, V(-0.95, 1.0, 0.1), 4, carRig.g),
-    motor: pos(bufs.motor, V(0, 0.7, 0), 5, truckRig.g),
   };
   for (const k of ['horn', 'door']) snd[k].setLoop(false);
+  // the Cybertruck (per user: "recreate the Cybertruck sound" — synthetic and futuristic, no engine): a live Web Audio
+  // synth, not a loop. Layers, all eased with setTargetAtTime:
+  //  · purr  — two detuned low sines + a soft triangle, trembling at ~7 Hz: the "cybernetic purr" at idle / low speed
+  //  · whir  — a sawtooth + an inharmonic square (×1.5) through a resonant band-pass: the metallic whir. Its pitch
+  //            ramps with speed (~140 Hz → ~1.7 kHz), a little sharper under load, like a turbine spooling up
+  //  · whine — a thin sine at ×3.07: the faint real motor whine
+  //  · bass  — a deep sine (38 → 88 Hz) that swells while you're on the accelerator
+  //  · air   — looping noise: a band-pass "whoosh" sweeping up with speed, plus a low tyre / wind rush
+  // motorGraph(c) builds the layers on any AudioContext (also an OfflineAudioContext, for testing) and returns the
+  // nodes, with mix unconnected; motorApply(n, t, on, k, load) eases every layer toward speed k / accelerator load
+  const motorGraph = c => {
+    const SRc = c.sampleRate, mix = c.createGain(); mix.gain.value = 0;
+    const osc = (type, f, gain, dest) => { const o = c.createOscillator(); o.type = type; o.frequency.value = f;
+      const g = c.createGain(); g.gain.value = gain; o.connect(g); g.connect(dest); o.start(); return { o, g }; };
+    const purr = c.createGain(); purr.gain.value = 0.16; purr.connect(mix);
+    const trem = c.createOscillator(), tremAmt = c.createGain(); trem.frequency.value = 7; tremAmt.gain.value = 0.06; trem.connect(tremAmt); tremAmt.connect(purr.gain); trem.start();
+    osc('sine', 55, 0.5, purr); osc('sine', 55.8, 0.4, purr); osc('triangle', 110, 0.12, purr);
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 6; bp.frequency.value = 400; bp.connect(mix);
+    const w1 = osc('sawtooth', 140, 0, bp), w2 = osc('square', 210, 0, bp), wh = osc('sine', 430, 0, mix), bass = osc('sine', 38, 0, mix);
+    const nb = c.createBuffer(1, SRc * 2, SRc), nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    const ns = c.createBufferSource(); ns.buffer = nb; ns.loop = true;
+    const nbp = c.createBiquadFilter(); nbp.type = 'bandpass'; nbp.Q.value = 0.8; nbp.frequency.value = 500;
+    const nlp = c.createBiquadFilter(); nlp.type = 'lowpass'; nlp.frequency.value = 220;
+    const whoosh = c.createGain(), rush = c.createGain(); whoosh.gain.value = 0; rush.gain.value = 0;
+    ns.connect(nbp); nbp.connect(whoosh); whoosh.connect(mix); ns.connect(nlp); nlp.connect(rush); rush.connect(mix); ns.start();
+    return { mix, purr, bp, w1, w2, wh, bass, nbp, whoosh, rush };
+  };
+  const motorApply = (n, t, on, k, load) => {
+    const T = (prm, v, tc = 0.08) => prm.setTargetAtTime(v, t, tc);
+    T(n.mix.gain, on ? 1 : 0, on ? 0.15 : 0.3);
+    if (!on) return;
+    const f = 140 * Math.pow(2, 3.6 * k) * (1 + 0.06 * load);
+    T(n.w1.o.frequency, f); T(n.w2.o.frequency, f * 1.5); T(n.bp.frequency, f * 2.2); T(n.wh.o.frequency, f * 3.07);
+    T(n.w1.g.gain, 0.03 + 0.32 * load + 0.12 * k); T(n.w2.g.gain, 0.01 + 0.14 * load);
+    T(n.wh.g.gain, 0.012 * k + 0.02 * load);
+    T(n.bass.o.frequency, 38 + 50 * k); T(n.bass.g.gain, 0.55 * load * (1 - 0.4 * k), 0.15);
+    T(n.purr.gain, 0.16 * (1 - 0.5 * k));   // a quiet purr: acceleration should be far louder than idle
+    T(n.nbp.frequency, 500 + 2500 * k); T(n.whoosh.gain, 0.3 * k * k + 0.1 * load * k); T(n.rush.gain, 0.5 * k);
+  };
+  const motorSynth = (() => {
+    const out = new THREE.PositionalAudio(listener); out.setRefDistance(5); out.setRolloffFactor(1.6); out.panner.panningModel = 'equalpower';
+    const holder = new THREE.Object3D(); holder.position.set(0, 0.7, 0); holder.add(out); truckRig.g.add(holder);
+    let n = null, load = 0;
+    // k: 0 … 1 of top speed; thr: 0 … 1 accelerator load (smoothed)
+    const set = (on, k = 0, thr = 0) => {
+      if (on && !n) { n = motorGraph(ctx); out.setNodeSource(n.mix); out.setVolume(0.42); }
+      if (!n) return;
+      load += ((on ? thr : 0) - load) * 0.2;
+      motorApply(n, ctx.currentTime, on, k, load);
+    };
+    return { set, graph: motorGraph, apply: motorApply };
+  })();
   const carSound = {
     engine(on, rate = 1) { if (!started) return; const e = snd.engine;
       if (on && !e.isPlaying) { e.setVolume(0.35); e.play(); } else if (!on && e.isPlaying) e.stop();
       if (on) { e.setPlaybackRate(rate); e.setVolume(0.25 + 0.2 * Math.min(1, rate - 0.8)); } },
-    motor(on, k = 0) { if (!started) return; const m = snd.motor;     // k: 0 … 1 of top speed
-      if (on && !m.isPlaying) m.play(); else if (!on && m.isPlaying) m.stop();
-      if (on) { m.setPlaybackRate(0.55 + 1.6 * k); m.setVolume(0.04 + 0.32 * k); } },
+    motor(on, k = 0, thr = 0) { if (!started) return; motorSynth.set(on, k, thr); },   // k: 0 … 1 of top speed, thr: accelerator load
+    motorSynth,
     attach(g) { for (const k of ['horn', 'door']) g.add(snd[k].parent); },   // horn / door sounds come from the vehicle you're in
     horn() { if (!started || !soundOn) return; const h = snd.horn; h.setVolume(0.7); if (h.isPlaying) h.stop(); h.play(); },
     door() { if (!started || !soundOn) return; const h = snd.door; h.setVolume(0.8); if (h.isPlaying) h.stop(); h.play(); },
@@ -7564,7 +7609,7 @@ car = (() => {
     // wheels spin and the fronts steer
     for (const w of rig.wheels) { w.w.rotation.x += (w.sx > 0 ? 1 : -1) * speed / rig.TR * dt; w.w.rotation.y = w.base + (w.front ? steer : 0); }
     rig.tailMat.emissiveIntensity = (rig.lightsOn ? 0.8 : 0) + 2.5 * brakeGlow;
-    if (rig.ev) snd.motor(true, Math.min(1, Math.abs(speed) / rig.MAXF + Math.abs(throttle) * 0.05));
+    if (rig.ev) snd.motor(true, Math.min(1, Math.abs(speed) / rig.MAXF), throttle > 0 && speed > -0.2 ? throttle : throttle < 0 && speed < 0.2 ? -throttle * 0.6 : 0);
     else snd.engine(true, 0.85 + Math.abs(speed) / rig.MAXF * 1.0 + Math.abs(throttle) * 0.12);
     // camera
     g.updateMatrixWorld();
