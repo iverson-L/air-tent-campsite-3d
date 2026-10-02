@@ -252,7 +252,7 @@
 <div id="fishHud"></div>
 <div id="actHud"></div>
 <button id="fishExit" type="button">✕ Stand up</button>
-<div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck / dive in the pond · <kbd>E</kbd> fish (at the stool) · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release</div>
+<div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck / dive in the pond · <kbd>E</kbd> fish (at the stool) · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release · <kbd>F</kbd> exit first person</div>
 
 <button id="openPanel" title="Open settings">⚙ Settings</button>
 <aside id="panel">
@@ -409,6 +409,7 @@ window.addEventListener('keydown', e => {
     if (walking) keys.duck = true;
   }
   // B → toggle on-screen controls (joystick + look pad)
+  if (e.code === 'KeyF' && !e.repeat && !car?.active && !document.getElementById('panel').contains(document.activeElement)) walkBtn.click();   // F: in / out of first person
   if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     osChk.checked = !osChk.checked;
     updateOS();
@@ -448,7 +449,8 @@ let walking = false;
 let yaw = 0, pitch = 0;
 const _eul = new THREE.Euler(); // temp for syncing view angles from the camera
 function enterWalk() {
-  if (innerWidth < 520) document.getElementById('closePanel').click(); // phones: pads need the screen, not the panel
+  // the panel closes on entering first person (per user, all devices — it used to be phones only); ⚙ Settings or F gets you out
+  if (!document.getElementById('panel').classList.contains('hidden')) document.getElementById('closePanel').click();
   // spawn at the current ground position, eye level 1.7 m
   const p = camera.position.clone();
   const r0 = Math.hypot(p.x, p.z);
@@ -500,6 +502,7 @@ const walkHint = document.getElementById('walkHint');
 // ---------- on-screen controls (for remote desktop / AnyDesk) ----------
 const osControls = document.getElementById('osControls');
 const osChk = document.getElementById('osControlsChk');
+if (!matchMedia('(pointer: coarse)').matches) osChk.checked = false;   // desktop (per user): no joysticks by default — B / the switch brings them back
 function updateOS() {
   osControls.style.display = (walking && osChk.checked) ? '' : 'none';
 }

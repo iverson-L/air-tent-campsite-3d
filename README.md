@@ -23,7 +23,7 @@ An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, 
 - Simulated campers wandering the site (fire, picnic table, tents, pond, hammock); they shelter under the flysheet when it rains (off by default, key `7`)
 - Copy a link to your exact view, or save a photo
 - Rain (overcast sky, pond ripples, dry under the tents) and procedural ambient sound (birds, crickets, campfire, rain, and water swishes when you swim)
-- Shortcuts: `E` fishing · `1` flysheet · `2` labels · `3` lights on/off · `4` night mode · `5` rain · `6` sound · `7` campers · `Tab` debug
+- Shortcuts: `E` fishing · `1` flysheet · `2` labels · `3` lights on/off · `4` night mode · `5` rain · `6` sound · `7` campers · `F` first person · `Tab` debug
 - WASD flies the orbit view; first-person walk mode: WASD + mouse look, or on-screen controls for touch / remote desktop (move stick on the left, drag the right half of the screen to look)
 - Dimension labels and a debug compass
 
