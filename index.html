@@ -6193,12 +6193,14 @@ life = (() => {
     }
     // tail: a short, broad, flat tail lying down the rump from a root just under the skin; brown on the outside, white
     // underneath — the white only shows when it flicks up (it swings back/up with +rotation.x)
-    const tail = new THREE.Group(); tail.position.set(0, 0.9, -0.545); tail.rotation.x = 0.55; g.add(tail);
+    // rest angle = the chord of the rump curve from the root (y 0.9) to the tip (y ≈ 0.74), so the tail lies ON the rump —
+    // at 0.55 rad it stood off the body as a flap, because the rump curves back in below the hips (per user: floating)
+    const tail = new THREE.Group(); tail.position.set(0, 0.9, -0.548); tail.rotation.x = 0.41; g.add(tail);
     const tailGeo = new THREE.SphereGeometry(1, 14, 10);                       // slender, narrowing to the tip (not a round disc)
     { const pp = tailGeo.attributes.position; for (let i = 0; i < pp.count; i++) pp.setX(i, pp.getX(i) * (1 - 0.5 * Math.max(0, -pp.getY(i)))); tailGeo.computeVertexNormals(); }
     const tTop = new THREE.Mesh(tailGeo, new THREE.MeshStandardMaterial({ color: 0x7a4c2a, roughness: 0.9 }));
-    tTop.scale.set(0.038, 0.1, 0.018); tTop.position.set(0, -0.088, -0.03); tail.add(tTop);
-    const tUnder = new THREE.Mesh(tailGeo, white); tUnder.scale.set(0.034, 0.092, 0.015); tUnder.position.set(0, -0.09, -0.018); tail.add(tUnder);
+    tTop.scale.set(0.038, 0.09, 0.016); tTop.position.set(0, -0.08, -0.016); tail.add(tTop);           // inner face on the rump
+    const tUnder = new THREE.Mesh(tailGeo, white); tUnder.scale.set(0.033, 0.083, 0.012); tUnder.position.set(0, -0.082, -0.006); tail.add(tUnder); // hidden against the body until it flicks
     // neck: pivots low at the base of the neck in front of the withers; runs up its local +y, the head hangs off its end.
     // Its base is buried deep in the chest, so tipping it down to graze never opens a gap
     const neck = new THREE.Group(); neck.position.set(0, 0.83, 0.5); g.add(neck);
@@ -6303,7 +6305,11 @@ life = (() => {
     birds: [0, 1, 2].map(() => buf(16, d => { for (let p = 0; p < 2; p++) { let t = 1 + p * 7 + Math.random() * 5; const f = rnd(1900, 2900), notes = 2 + (Math.random() * 3 | 0);
       for (let k = 0; k < notes; k++) { chirp(d, t, rnd(0.08, 0.16), f * rnd(0.95, 1.1), f * rnd(0.85, 1.15), rnd(0.5, 0.9)); t += rnd(0.14, 0.26); } } })),
     crickets: buf(4, d => { for (const [f, step, off] of [[4400, 0.62, 0.0], [4900, 0.71, 0.3]]) for (let t = off; t < 3.9; t += step) for (let p = 0; p < 4; p++) chirp(d, t + p * 0.032, 0.02, f, f, 0.8); }),
-    water: buf(6, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { lp += 0.05 * ((Math.random() * 2 - 1) - lp); d[i] = lp * (0.4 + 0.6 * Math.max(0, Math.sin(2 * Math.PI * 4 * i / n)) ** 2); } }),
+    // swim strokes (per user: no water sound while you're still): soft swells of low-passed noise, 3 strokes per 4 s.
+    // It's not a pond ambience — its volume follows how fast YOU move in the water (setSwim), silent when still / on land
+    water: buf(4, (d, n) => { let lp = 0, lp2 = 0;
+      for (let i = 0; i < n; i++) { const t = (i / SR) % (4 / 3), env = t < 0.3 ? (t / 0.3) ** 2 : Math.exp(-(t - 0.3) / 0.35);
+        lp += 0.08 * ((Math.random() * 2 - 1) - lp); lp2 += 0.3 * (lp - lp2); d[i] = (lp * 0.7 + (lp - lp2) * 0.6) * env; } }),
     rain: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; lp += 0.3 * (w - lp); d[i] = (w - lp) * 0.6 + lp * 0.4; }
       for (let c = 0; c < 120; c++) { const s0 = Math.random() * n | 0; for (let i = 0; i < 200 && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * Math.exp(-i / 40) * 0.8; } }),
   };
@@ -6314,7 +6320,7 @@ life = (() => {
   const snd = {
     crickets: amb(bufs.crickets), rain: amb(bufs.rain),
     fire: pos(bufs.fire, V(0, 0.4, 0), 2.2, fireGroup),
-    water: pos(bufs.water, V(POND.x, 0, POND.z), 3.5),
+    water: amb(bufs.water),
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
   };
   let soundOn = true, started = false;
@@ -6325,7 +6331,6 @@ life = (() => {
     for (const b of snd.birds) b.setVolume(!night && !rain ? 0.16 : 0);
     snd.crickets.setVolume(night && !rain ? 0.14 : 0);
     snd.rain.setVolume(rain ? 0.4 : 0);
-    snd.water.setVolume(0.35);
   };
   const startAudio = () => {
     if (started) return;
@@ -6339,6 +6344,7 @@ life = (() => {
   // ===== per-frame =====
   const _c = new THREE.Vector3();
   function update(t, dt) {
+    if (started) { swimVol += (swim * 0.3 - swimVol) * Math.min(1, dt * 6); snd.water.setVolume(swimVol < 0.003 ? 0 : swimVol); } // swish fades in/out with movement
     for (const tw of towels) tw.rotation.x = Math.sin(t * 1.3 + tw.position.x) * 0.06 + (rain ? 0.02 : 0);
     for (const s of steam) {                                     // kettle steam wisps
       const u = ((t / 3) + s.t0) % 1;
@@ -6366,7 +6372,7 @@ life = (() => {
     deer.head.rotation.y = deer.graze ? Math.sin(t * 1.7) * 0.08 : Math.sin(t * 0.8) * 0.5; // nibbling / looking round
     if (t > deer.twitch) { deer.twitch = t + rnd(1.5, 4); deer.ears[Math.random() * 2 | 0].userData.flick = 1; }
     for (const e of deer.ears) { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 4); e.rotation.x = -0.2 - 0.5 * Math.sin(Math.PI * e.userData.flick); }
-    deer.tail.rotation.x = 0.55 + Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.3;             // lies on the rump, now and then flicks up (white side)
+    deer.tail.rotation.x = 0.41 + Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.4;             // lies on the rump, now and then flicks up (white side)
     if (fireflies.visible) {
       ff.forEach((f, i) => {
         ffPos.set([f.x + Math.sin(t * 0.3 * f.f + f.ph) * 0.8, f.y + Math.sin(t * 0.5 * f.f + f.ph * 2) * 0.3, f.z + Math.cos(t * 0.25 * f.f + f.ph) * 0.8], i * 3);
@@ -6411,7 +6417,9 @@ life = (() => {
   }
   function setSound(on) { soundOn = on; if (on) startAudio(); applySound(); }
   for (const r of rings) r.m.visible = false;
-  return { update, refreshShelters, setNight, setWeather, setSound };
+  let swim = 0, swimVol = 0;
+  const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
+  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd };   // snd: debug handle (window.__perf.life.snd)
 })();
 
 // ---------- CAMPERS (per user — "see people moving around", GitHub-Pages only, so they're simulated, not online
@@ -6700,11 +6708,33 @@ if (PHONE) {                                   // phones: show the scene, not th
 for (const el of document.querySelectorAll('#panel input[type=checkbox], #panel button, #openPanel'))
   el.addEventListener(el.tagName === 'BUTTON' ? 'click' : 'change', () => el.blur());
 
+// ---------- adaptive resolution (perf) ----------
+// Every ~2 s, judge the average frame time. Under ~40 fps → render at a lower pixel ratio (−15 %, floor 0.75 px/px
+// and half the base); a steady 57+ fps for ~6 s → step back up. A step down that doesn't speed things up (e.g. a browser
+// capped at 30 fps in power-saving mode) is undone and adapting stops, so quality is never lost for nothing.
+const dpr = { scale: 1, t0: 0, n: 0, good: 0, prevAvg: 0, wentDown: false, locked: false, from: 0 };
+window.__perf.dpr = dpr;                                                    // debug: current scale / locked
+const pixelRatio = () => Math.max(Math.min(0.75, devicePixelRatio), Math.min(devicePixelRatio, MAX_DPR) * dpr.scale);
+function adaptResolution() {                          // wall-clock frame time (the loop's dt is capped at 50 ms)
+  const now = performance.now();
+  if (dpr.locked || document.hidden || !dpr.from || now < dpr.from) { dpr.t0 = 0; return; }
+  if (!dpr.t0) { dpr.t0 = now; dpr.n = 0; return; }
+  dpr.n++;
+  if (now - dpr.t0 < 2000) return;
+  const avg = (now - dpr.t0) / 1000 / dpr.n, before = dpr.scale; dpr.t0 = now; dpr.n = 0;
+  if (dpr.wentDown && avg > dpr.prevAvg * 0.93) { dpr.scale = dpr.prevScale; dpr.locked = true; }      // no gain: undo, stop
+  else if (avg > 1 / 40 && dpr.scale > 0.5) dpr.scale = Math.max(0.5, dpr.scale - 0.15);
+  else if (avg < 1 / 57 && dpr.scale < 1 && ++dpr.good >= 3) { dpr.scale = Math.min(1, dpr.scale + 0.1); dpr.good = 0; }
+  if (avg >= 1 / 57) dpr.good = 0;
+  dpr.wentDown = dpr.scale < before; dpr.prevAvg = avg; dpr.prevScale = before;
+  if (dpr.scale !== before) renderer.setPixelRatio(pixelRatio());
+}
+
 // ---------- resize + loop ----------
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_DPR)); // window moved between monitors
+  renderer.setPixelRatio(pixelRatio()); // window moved between monitors
   renderer.setSize(innerWidth, innerHeight);
   labelRenderer.setSize(innerWidth, innerHeight);
 });
@@ -6766,10 +6796,13 @@ renderer.compile(scene, camera); // warm up every material now so the first fram
 
 const clock = new THREE.Clock();
 let firstFrame = true;
-let inPond = false, pondSpeed = 1, wasUnder = false; // swimming state (walk mode)
+let inPond = false, pondSpeed = 1, wasUnder = false, swimMove = 0; // swimming state (walk mode); swimMove 0…1 drives the swish sound
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3(); // orbit-view WASD temps
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (!dpr.from) dpr.from = performance.now() + 4000;   // let shaders / textures settle before judging speed
+  adaptResolution();
+  swimMove = 0;                               // set below only while walking AND moving in the pond
   fishing?.update(dt);                        // fishing spot: prompt, cast/bite/reel, seated camera
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
   if (fishing?.active) {
@@ -6784,6 +6817,7 @@ renderer.setAnimationLoop(() => {
     let s = (keys.d ? 1 : 0) - (keys.a ? 1 : 0) + joyInput.s;
     const len = Math.hypot(f, s);
     if (len > 0.05) {
+      if (inPond) swimMove = Math.min(len, 1);
       const dist = (keys.shift ? 2 : 4) * dt * Math.min(len, 1) * pondSpeed; // m/s — run by default, Shift = walk; slower in water
       fpControls.moveForward((f / len) * dist);
       fpControls.moveRight((s / len) * dist);
@@ -6868,6 +6902,7 @@ renderer.setAnimationLoop(() => {
   fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15);
   pond.update(t, dt);                         // koi swim, ripples drift
   treeWind.value = t;                         // foliage sway
+  life?.setSwim(swimMove);                    // water swish only while moving in the pond
   life?.update(t, dt);                        // grass, wildlife, fireflies, rain, sound
   campers.update(t, dt);                      // simulated campers wander between activities
   // slow cloud drift
