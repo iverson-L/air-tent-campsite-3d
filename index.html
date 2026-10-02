@@ -4367,10 +4367,9 @@ function buildLabels() {
   addLabel('1.9 m', x5c, 0.25, D5 / 2 + 0.45);
   addLabel('2.4 m', x5c + B05_DEPTH / 2 + 0.45, 0.25, 0);
 
-  addLabel(`flysheet ridge ${FLY_RIDGE_H.toFixed(2)} m`, 0, FLY_RIDGE_H + 0.45, 0, true);
+  // no flysheet or gap labels (per user)
   addLabel('Block 10 + 09 + 05', 0, RIDGE_H + 0.55, UNIT3_Z + 1.25, true);
   addLabel('Block 05', SOLO05.x, 1.40 + 0.45, SOLO05.z, true);
-  addLabel(`gap ${gap.toFixed(2)} m`, 0, 0.3, D / 2 + 0.75, true);
 }
 
 // ---------- sky dome (gradient) + sun + clouds + stars ----------
