@@ -7343,14 +7343,27 @@ acts = (() => {
 
   // ----- seated / lying activities -----
   const SEATED = {
-    roast: { start() { roast = 0; stick.visible = mallow.visible = true; mallowMat.emissiveIntensity = 0; },
+    roast: { start() { roast = 0; stick.visible = mallow.visible = true; mallowMat.emissiveIntensity = 0; aimAt(null); },
       hud: () => TOUCH ? 'Roasting… <button data-act="pull">🍡 Pull it out</button>' : 'Roasting… <kbd>E</kbd> pull it out · <kbd>R</kbd> add a log' },
-    stars: { start() { const r = blanket.rotation.y; camera.position.set(BL[0] - Math.sin(r) * 0.62, 0.32, BL[1] - Math.cos(r) * 0.62); camera.rotation.set(1.15, r + Math.PI, 0, 'YXZ'); },
+    stars: { start() { const r = blanket.rotation.y; camera.position.set(BL[0] - Math.sin(r) * 0.62, 0.32, BL[1] - Math.cos(r) * 0.62); aimAt(1.15, r + Math.PI); },
       hud: () => (isNight ? 'Stargazing' : 'Cloud watching') + (TOUCH ? '' : ' · <kbd>E</kbd> get up') },
-    tail: { start() { rig.g.updateMatrixWorld(); camera.position.copy(_p.set(0.05, 1.2, -1.95).applyMatrix4(rig.g.matrixWorld)); camera.rotation.set(-0.05, rig.g.rotation.y + Math.PI + Math.PI, 0, 'YXZ'); tailWant = 1; },
+    tail: { start() { rig.g.updateMatrixWorld(); camera.position.copy(_p.set(0.05, 1.2, -1.95).applyMatrix4(rig.g.matrixWorld)); aimAt(-0.05, rig.g.rotation.y); tailWant = 1; },
       hud: () => 'Sitting in the back' + (TOUCH ? '' : ' · <kbd>E</kbd> get out') },
   };
   let tailWant = 0, tailOpen = 0;
+  // framing (per user: start roasting while looking at your feet and you never saw the stick): every activity eases the
+  // view onto its subject over ~0.7 s — the marshmallow in the flames, the sky, the open back of the car — then look
+  // is free again. aimAt(pitch, yaw) for a fixed framing, aimAt(null) to track the marshmallow while you crouch.
+  let aim = null; const _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ'), _m4 = new THREE.Matrix4();
+  const aimAt = (pitch, yaw) => { aim = { t: 0, pitch, yaw }; };
+  function aimStep(dt) {
+    if (!aim) return;
+    aim.t += dt;
+    if (aim.pitch === null) { _m4.lookAt(camera.position, mallow.position, camera.up); _q.setFromRotationMatrix(_m4); }   // marshmallow
+    else _q.setFromEuler(_e.set(aim.pitch, aim.yaw, 0, 'YXZ'));
+    camera.quaternion.slerp(_q, aim.t > 0.7 ? 1 : 1 - Math.exp(-dt * 8));
+    if (aim.t > 0.7) aim = null;
+  }
   function begin(kind) {
     cur = kind; back = camera.position.clone(); releaseKeys(); if (fpControls.isLocked && kind !== 'roast') fpControls.unlock();
     walkHint.style.display = 'none'; document.getElementById('osLeft').style.visibility = 'hidden';
@@ -7365,8 +7378,9 @@ acts = (() => {
         if (r >= 0.6 && r < 0.82) perfect++; toast(msg + (perfect > 1 && r >= 0.6 && r < 0.82 ? ` (${perfect} perfect)` : '')); }
     }
     if (cur === 'tail') tailWant = 0;
+    aim = null;
     if (cur !== 'roast') { camera.position.copy(back); camera.position.y = EYE_H; camera.rotation.set(0, camera.rotation.y, 0, 'YXZ'); }
-    if (cur === 'roast') camera.position.y = EYE_H;
+    if (cur === 'roast') { camera.position.y = EYE_H; _e.setFromQuaternion(camera.quaternion, 'YXZ'); camera.rotation.set(Math.max(-0.35, Math.min(0.35, _e.x)), _e.y, 0, 'YXZ'); }
     cur = null; hush(); exitBtn.style.display = 'none'; document.getElementById('osLeft').style.visibility = '';
     walkHint.style.display = 'block'; updateOS();
   }
@@ -7442,6 +7456,7 @@ acts = (() => {
     } else if (cur === 'tail') {
       rig.g.updateMatrixWorld(); camera.position.copy(_p.set(0.05, 1.2, -1.95).applyMatrix4(rig.g.matrixWorld));
     } else if (cur === 'stars') say(SEATED.stars.hud());
+    aimStep(dt);
     if (cur) return;
     // prompts
     if (!onFoot()) { hush(); return; }
