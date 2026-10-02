@@ -147,6 +147,8 @@
   #fishHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
     background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
   #fishHud kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.18); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
+  #fishExit { position: fixed; right: 16px; top: 16px; z-index: 31; display: none; font: 600 14px/1 system-ui, sans-serif; color: #f3f4f6;
+    background: rgba(20,22,26,.80); border: 0; border-radius: 999px; padding: 11px 16px; cursor: pointer; } /* touch has no Esc/WASD */
   #fishHud.alert { background: #c2410c; animation: fishPulse .35s ease-in-out infinite alternate; }
   @keyframes fishPulse { to { transform: translateX(-50%) scale(1.08); } }
   #walkHint kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.16); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
@@ -240,6 +242,7 @@
 </div>
 <div id="app"></div>
 <div id="fishHud"></div>
+<button id="fishExit" type="button">✕ Stand up</button>
 <div id="walkHint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · click scene → mouse look · <kbd>Shift</kbd> walk · <kbd>C</kbd> duck / dive in the pond · <kbd>E</kbd> fish (at the stool) · <kbd>Space</kbd> jump · <kbd>B</kbd> pads · <kbd>Esc</kbd> release</div>
 
 <button id="openPanel" title="Open settings">⚙ Settings</button>
@@ -5586,7 +5589,9 @@ fishing = (() => {
   const hud = document.getElementById('fishHud');
   const say = (html, alert = false) => { hud.innerHTML = html; hud.style.display = 'block'; hud.classList.toggle('alert', alert); };
   const hush = () => { hud.style.display = 'none'; hud.classList.remove('alert'); };
-  const IDLE = '<kbd>E</kbd> cast · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Esc</kbd> stand up';
+  // touch screens (per user: no way to stop fishing on mobile): tap the pill = E, and a Stand up button shows while fishing
+  const TOUCH = matchMedia('(pointer: coarse)').matches, exitBtn = document.getElementById('fishExit');
+  const IDLE = TOUCH ? '<b>Tap</b> to cast' : '<kbd>E</kbd> cast · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Esc</kbd> stand up';
 
   let active = false, state = 'ready', tState = 0, biteAt = 0, caught = 0, saved = null, catchFish = null, catchName = '', catchCm = 0;
   const target = V(0, 0, 0), from = V(0, 0, 0), look = V(0, 0, 0), eye = toWorld(V(0, 1.02, -0.08));
@@ -5599,13 +5604,13 @@ fishing = (() => {
     controls.enabled = false;
     walkHint.style.display = 'none'; osControls.style.display = 'none';
     releaseKeys();
-    active = true;
+    active = true; exitBtn.style.display = 'block';
     look.copy(toWorld(V(0, 0, 3)));
     cast();
   }
   function stop() {
     if (!active) return;
-    active = false; hush();
+    active = false; hush(); exitBtn.style.display = 'none';
     if (catchFish) { scene.remove(catchFish.f); catchFish = null; }
     restPose();
     if (saved.walking) {                    // stand up beside the stool, still in first person, facing the water
@@ -5649,7 +5654,7 @@ fishing = (() => {
     if (!active) {
       // first-person prompt when you stand next to the stool
       const near = walking && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) < 2.2;
-      if (near) say('<kbd>E</kbd> sit down and fish'); else if (hud.style.display !== 'none') hush();
+      if (near) say(TOUCH ? '<b>Tap</b> to sit down and fish' : '<kbd>E</kbd> sit down and fish'); else if (hud.style.display !== 'none') hush();
       // idle: the bobber hangs a little below the rod tip on the rest
       const tip = tipWorld();
       bobber.position.set(tip.x, tip.y - 0.3, tip.z);
@@ -5682,7 +5687,7 @@ fishing = (() => {
       if (state === 'wait') {
         const pre = biteAt - tState;                       // two nibbles in the last 1.4 s before the bite
         if (pre < 1.4 && pre > 0) dip = Math.max(0, Math.sin(pre * 9)) * 0.012;
-        if (tState >= biteAt) { go('bite'); say('Bite! Press <kbd>E</kbd>!', true); }
+        if (tState >= biteAt) { go('bite'); say(TOUCH ? 'Bite! <b>Tap</b>!' : 'Bite! Press <kbd>E</kbd>!', true); }
       }
       if (state === 'bite') {
         dip = 0.06;                                        // pulled under, tugging sideways
@@ -6658,6 +6663,7 @@ document.getElementById('rainOn').addEventListener('change', e => { raining = e.
 document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
 document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
+document.getElementById('fishExit').addEventListener('click', () => fishing.stop()); // stand up (touch has no Esc / WASD)
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
 const viewLink = () => {
