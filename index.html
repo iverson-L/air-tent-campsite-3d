@@ -263,6 +263,7 @@
     <label class="toggle"><span>Night mode</span><kbd>4</kbd><input type="checkbox" id="nightMode" /></label>
     <label class="toggle"><span>Rain</span><kbd>5</kbd><input type="checkbox" id="rainOn" /></label>
     <label class="toggle"><span>Sound</span><kbd>6</kbd><input type="checkbox" id="soundOn" checked /></label>
+    <label class="toggle"><span>Campers</span><kbd>7</kbd><input type="checkbox" id="campersOn" /></label>
   </details>
 
   <details open><summary>Controls</summary>
@@ -293,7 +294,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // ---------- loading screen progress (the build below is split into stages so the bar can repaint) ----------
 const ldFill = document.getElementById('ldFill'), ldPct = document.getElementById('ldPct'), ldStage = document.getElementById('ldStage');
 const nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+const stageTimes = [];                       // load profiling: [label, ms since page start] (window.__perf.stages)
 async function stage(label, pct) {
+  stageTimes.push([label, Math.round(performance.now())]);
   ldStage.textContent = label;
   ldFill.style.width = pct + '%';
   ldPct.textContent = pct + '%';
@@ -401,8 +404,8 @@ window.addEventListener('keydown', e => {
     dbgChk.checked = !dbgChk.checked;
     updateDbg();
   }
-  // 1 flysheet · 2 dimension labels · 3 lights · 4 night mode (same as flipping the panel switches)
-  const toggleKeys = { Digit1: 'showFly', Digit2: 'showLabels', Digit3: 'lightsOn', Digit4: 'nightMode', Digit5: 'rainOn', Digit6: 'soundOn',
+  // 1 flysheet · 2 dimension labels · 3 lights · 4 night mode · 5 rain · 6 sound · 7 campers (same as flipping the panel switches)
+  const toggleKeys = { Digit1: 'showFly', Digit2: 'showLabels', Digit3: 'lightsOn', Digit4: 'nightMode', Digit5: 'rainOn', Digit6: 'soundOn', Digit7: 'campersOn', Numpad7: 'campersOn',
     Numpad1: 'showFly', Numpad2: 'showLabels', Numpad3: 'lightsOn', Numpad4: 'nightMode', Numpad5: 'rainOn', Numpad6: 'soundOn' };
   if (toggleKeys[e.code] && !e.repeat) {
     const el = document.getElementById(toggleKeys[e.code]);
@@ -4948,20 +4951,23 @@ const campfire = (() => {
   const bed = new THREE.Mesh(new THREE.CircleGeometry(0.4, 28), bedMat);
   bed.rotation.x = -Math.PI / 2; bed.position.y = 0.03; bed.receiveShadow = true; G.add(bed);
   // stone ring: rough rounded stones, varied tints
-  const stoneGeo = new THREE.DodecahedronGeometry(1, 1);
+  // stones: low-poly (12-face) rocks like the pond's — one instanced mesh, per-stone tint; corners jittered by position so faces stay closed
+  const stoneGeo = new THREE.DodecahedronGeometry(1, 0);
   { const pp = stoneGeo.attributes.position;
-    for (let i = 0; i < pp.count; i++) { const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i), n = 1 + 0.12 * Math.sin(x * 5.1 + y * 3.3) * Math.cos(z * 4.7 - y * 2.1);
+    for (let i = 0; i < pp.count; i++) { const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i), n = 1 + 0.14 * Math.sin(x * 7.3 + y * 4.1) * Math.cos(z * 5.9 - y * 3.7);
       pp.setXYZ(i, x * n, y * n, z * n); }
     stoneGeo.computeVertexNormals(); }
-  for (let i = 0; i < 15; i++) {                                  // ≈ 22–30 cm stones, edge to edge round a 1.1 m ring
-    const a = (i / 15) * Math.PI * 2 + (Math.random() - 0.5) * 0.1, sc = 0.09 + Math.random() * 0.035;
-    const st = new THREE.Mesh(stoneGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.08 + Math.random() * 0.05, 0.08 + Math.random() * 0.08, 0.32 + Math.random() * 0.16), roughness: 0.95 }));
-    st.scale.set(sc * 1.25, sc * 0.75, sc);
-    st.position.set(Math.cos(a) * 0.55, sc * 0.5, Math.sin(a) * 0.55);
-    st.rotation.set(Math.random() * 0.4, -a + (Math.random() - 0.5) * 0.5, Math.random() * 0.4);
-    st.castShadow = st.receiveShadow = true;
-    G.add(st);
-  }
+  { const N = 15, stones = new THREE.InstancedMesh(stoneGeo, new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), N), o = new THREE.Object3D(), c = new THREE.Color();
+    for (let i = 0; i < N; i++) {                                 // ≈ 22–30 cm stones, edge to edge round a 1.1 m ring
+      const a = (i / N) * Math.PI * 2 + (Math.random() - 0.5) * 0.1, sc = 0.09 + Math.random() * 0.035;
+      o.scale.set(sc * 1.3, sc * 0.75, sc * 1.05);
+      o.position.set(Math.cos(a) * 0.55, sc * 0.45, Math.sin(a) * 0.55);
+      o.rotation.set(Math.random() * 0.4, -a + (Math.random() - 0.5) * 0.5 + Math.random() * 1.2, Math.random() * 0.4);
+      o.updateMatrix(); stones.setMatrixAt(i, o.matrix);
+      stones.setColorAt(i, c.setHSL(0.08 + Math.random() * 0.05, 0.08 + Math.random() * 0.08, 0.32 + Math.random() * 0.16));
+    }
+    stones.castShadow = stones.receiveShadow = true;
+    G.add(stones); }
   // logs: split-log cylinder, bark-textured, charred black toward the burning end (vertex colours)
   const logGeo = (len, r, char) => {
     const g = new THREE.CylinderGeometry(r * 0.9, r, len, 9, 4);
@@ -5818,6 +5824,10 @@ function applyLights() {
     t.userData.matGableMesh.emissive.set(night ? 0xffb46a : 0x000000);
     t.userData.matGableMesh.emissiveIntensity = night ? 0.3 : 0;
   }
+  // (per user: performance) a light at zero brightness still costs every pixel in three.js — hide dark ones, so by
+  // day the string/tree/table lights drop out of the shaders entirely (switching day ↔ night recompiles once)
+  for (const l of [stringLight, ...treeLights, ...tableLamps.map(t => t.light), ...[tentL, tentR, block05, u3b10, u3b09, u3b05, solo05].map(t => t.userData.lantern)])
+    l.visible = l.intensity > 0;
 }
 
 await stage('Pitching the tents…', 85);
@@ -6076,20 +6086,23 @@ life = (() => {
   // ===== ducks paddling lazy loops on the pond =====
   const ducks = [];
   {
+    const duckMats = {}, duckBall = new THREE.SphereGeometry(1, 16, 12), duckEye = new THREE.SphereGeometry(0.008, 6, 6);
+    const duckTail = new THREE.ConeGeometry(0.05, 0.09, 12);
     const mk = drake => {
-      const d = new THREE.Group(), M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }); d.userData.dynamic = true;
+      const d = new THREE.Group(); d.userData.dynamic = true;
+      const M = c => duckMats[c] ||= new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 });   // shared across the ducks
       const part = (geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); d.add(m); return m; };
-      const ball = new THREE.SphereGeometry(1, 16, 12);
-      part(ball, M(drake ? 0xbdb8ad : 0x8a6a48), 0, 0.06, 0, 0.12, 0.085, 0.2);                 // body
-      part(ball, M(drake ? 0x6a3b26 : 0x7a5a3a), 0, 0.075, 0.1, 0.1, 0.085, 0.09);              // chest
-      part(ball, M(drake ? 0x2a2a2a : 0x6e5236), 0, 0.09, -0.19, 0.06, 0.04, 0.07);            // tail
+      part(duckBall, M(drake ? 0xbdb8ad : 0x8a6a48), 0, 0.06, 0, 0.12, 0.085, 0.2).castShadow = true; // body
+      part(duckBall, M(drake ? 0x6a3b26 : 0x7a5a3a), 0, 0.075, 0.1, 0.1, 0.085, 0.09);              // chest
+      for (const sx of [-1, 1])                                                                     // folded wings hugging the flanks
+        part(duckBall, M(drake ? 0x8f897e : 0x6b4f33), sx * 0.083, 0.088, -0.05, 0.042, 0.05, 0.14).rotation.set(0.12, 0, sx * 0.25);
+      // tail: a short, broad, flat fan tipped up like a dabbling duck's (was a squashed ball)
+      part(duckTail, M(drake ? 0x3a3a3a : 0x6e5236), 0, 0.093, -0.19, 1.4, 1, 0.38).rotation.x = -(Math.PI / 2 - 0.55);
       part(new THREE.CylinderGeometry(0.03, 0.04, 0.1, 10), M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.15, 0.14).rotation.x = 0.3; // neck
-      part(ball, M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.21, 0.16, 0.05, 0.05, 0.06);              // head
+      part(duckBall, M(drake ? 0x1f5c33 : 0x8a6a48), 0, 0.21, 0.16, 0.05, 0.05, 0.06);              // head
       part(new THREE.BoxGeometry(0.035, 0.012, 0.06), M(drake ? 0xe0b630 : 0xc0853a), 0, 0.2, 0.225); // beak
-      if (drake) { part(new THREE.TorusGeometry(0.034, 0.006, 6, 14), M(0xf2f2f2), 0, 0.165, 0.14).rotation.x = Math.PI / 2 - 0.3;
-        for (const sx of [-1, 1]) part(new THREE.BoxGeometry(0.01, 0.03, 0.06), M(0x2c4fa0), sx * 0.115, 0.08, -0.04); } // neck ring, speculum
-      for (const sx of [-1, 1]) part(new THREE.SphereGeometry(0.008, 6, 6), M(0x0b0b0c), sx * 0.04, 0.225, 0.19);
-      d.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      if (drake) part(new THREE.TorusGeometry(0.034, 0.006, 6, 14), M(0xf2f2f2), 0, 0.165, 0.14).rotation.x = Math.PI / 2 - 0.3; // neck ring
+      for (const sx of [-1, 1]) part(duckEye, M(0x0b0b0c), sx * 0.04, 0.225, 0.19);
       scene.add(d);
       return d;
     };
@@ -6110,18 +6123,21 @@ life = (() => {
     }
   }
 
-  // ===== a stag grazing in a clearing at the treeline (per user: refined model). Faces local +z.
-  //       Body: a sphere reshaped into a deep chest, tucked waist and rounded hips, coat shading to a pale belly
-  //       (vertex colours). Jointed legs (shoulder/elbow/knee, hip/stifle/hock — hind legs angle back at the hock),
-  //       dark hooves. Thick tapering neck on a pivot (graze ↔ look up), tapered head with dark nose, white muzzle
-  //       band and throat patch, leaf-shaped cupped ears, branching antlers with tines, a white-under tail. =====
+  // ===== a stag grazing in a clearing at the treeline. Faces local +z.
+  //       Rebuilt (per user: parts floated; tail, ears, antlers and neck were wrong). Body, legs, neck and head share ONE
+  //       vertex-coloured coat material, so the markings (pale belly, darker shins, white throat, muzzle band and chin,
+  //       black nose) are painted on instead of stuck-on blobs. Legs and neck are single smooth lofts (no pipe segments or
+  //       joint balls) whose tops bury in the body; ears, antler pedicles and the tail root each start just under the
+  //       surface they grow from. =====
   const deer = {};
   {
     const g = new THREE.Group(); g.userData.dynamic = true;             // animated neck / ears / tail
-    const COAT = new THREE.Color(0x8b5a33), BELLY = new THREE.Color(0xdcc7a6);
-    const coat = new THREE.MeshStandardMaterial({ color: 0x8b5a33, roughness: 0.9 }), shin = new THREE.MeshStandardMaterial({ color: 0x6a4428, roughness: 0.9 });
+    const COAT = new THREE.Color(0x8b5a33), BELLY = new THREE.Color(0xdcc7a6), SHIN = new THREE.Color(0x6a4428),
+      WHITE = new THREE.Color(0xeee6d8), NOSE = new THREE.Color(0x1d1712), sstep = THREE.MathUtils.smoothstep;
+    const hide = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
     const white = new THREE.MeshStandardMaterial({ color: 0xeee6d8, roughness: 0.9 }), dark = new THREE.MeshStandardMaterial({ color: 0x1d1712, roughness: 0.6 });
-    const bone = new THREE.MeshStandardMaterial({ color: 0xd8ccb2, roughness: 0.7 });
+    const bone = new THREE.MeshStandardMaterial({ color: 0xcfc2a5, roughness: 0.7 });
+    const earMat = new THREE.MeshStandardMaterial({ color: 0x8b5a33, roughness: 0.9, side: THREE.DoubleSide });
     // body: unit sphere → length 1.25 m along z, half-depth by profile (deep chest, tucked waist, round hips)
     const bodyGeo = new THREE.SphereGeometry(1, 32, 20);
     {
@@ -6133,70 +6149,98 @@ life = (() => {
         const width = 0.17 + 0.02 * Math.exp(-(((z + 0.42) / 0.18) ** 2));  // hips a touch wider
         const tuck = uy < 0 ? 0.035 * Math.exp(-(((z + 0.05) / 0.25) ** 2)) : 0; // belly line rises at the waist
         pp.setXYZ(i, ux * width, uy * depth + tuck, z);
-        c.copy(COAT).lerp(BELLY, THREE.MathUtils.smoothstep(-uy, 0.35, 0.85));
+        c.copy(COAT).lerp(BELLY, sstep(-uy, 0.35, 0.85));
         col.set([c.r, c.g, c.b], i * 3);
       }
       bodyGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
       bodyGeo.computeVertexNormals();
     }
-    const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+    const body = new THREE.Mesh(bodyGeo, hide);
     body.position.y = 0.79; g.add(body);
-    // limbs: tapered segments joint → joint, a sphere at each joint so they read as one leg
-    const Y = V(0, 1, 0);
-    const limb = (pts, radii, mats) => {
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i], b = pts[i + 1], d = b.clone().sub(a), seg = new THREE.Mesh(new THREE.CylinderGeometry(radii[i + 1], radii[i], d.length(), 10), mats[i]);
-        seg.position.copy(a).addScaledVector(d, 0.5); seg.quaternion.setFromUnitVectors(Y, d.normalize()); g.add(seg);
-        // a ball at every joint — including the shoulder / hip, so the leg tops round off inside the body (flat cylinder
-        // caps poked out of the flanks before)
-        const j = new THREE.Mesh(new THREE.SphereGeometry(radii[i] * (i ? 1.05 : 1.0), 12, 10), mats[Math.max(0, i - 1)]); j.position.copy(a); g.add(j);
+    // loft: one smooth tube through pts (all in an x = const plane) with an elliptical section, rx across × rz in-plane,
+    // radii given per control point; col(c, p, u, cn) paints each vertex (u 0→1 along the tube, cn −1…1 toward the
+    // in-plane normal X × tangent). Both ends are left open: each is buried in a body part or a hoof.
+    const X = V(1, 0, 0), Y = V(0, 1, 0);
+    const loft = (pts, rx, rz, col, N = 28, M = 16) => {
+      const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.35), p = V(), t = V(), n = V(), q = V(), c = new THREE.Color();
+      const pos = [], cols = [], idx = [];
+      for (let i = 0; i <= N; i++) {
+        const u = i / N; curve.getPointAt(u, p); curve.getTangentAt(u, t); n.crossVectors(X, t).normalize();
+        const f = u * (pts.length - 1), k = Math.min(pts.length - 2, Math.floor(f)), w = f - k;
+        const ax = rx[k] + (rx[k + 1] - rx[k]) * w, az = rz[k] + (rz[k + 1] - rz[k]) * w;
+        for (let j = 0; j < M; j++) {
+          const a = j / M * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+          q.copy(p).addScaledVector(X, ca * ax).addScaledVector(n, sa * az); pos.push(q.x, q.y, q.z);
+          col(c, q, u, sa); cols.push(c.r, c.g, c.b);
+        }
       }
-      const hoof = new THREE.Mesh(new THREE.CylinderGeometry(radii.at(-1) * 0.9, radii.at(-1) * 1.15, 0.06, 10), dark);
-      hoof.position.copy(pts.at(-1)).add(V(0, 0.03, 0.01)); g.add(hoof);
+      for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * M + j, b = i * M + (j + 1) % M; idx.push(a, a + M, b, b, a + M, b + M); }
+      const geo = new THREE.BufferGeometry(); geo.setIndex(idx);
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+      geo.computeVertexNormals();
+      return new THREE.Mesh(geo, hide);
+    };
+    // legs: shoulder / hip buried in the body → elbow / stifle → knee / hock (hind legs angle back) → fetlock → into the hoof
+    const legCol = (c, q) => c.copy(COAT).lerp(SHIN, sstep(0.6 - q.y, 0, 0.22));      // coat darkens down to the shins
+    const hoofGeo = new THREE.CylinderGeometry(0.02, 0.029, 0.05, 10);
+    for (const sx of [-1, 1]) {
+      const x = sx * 0.095;
+      const front = [V(x, 0.8, 0.3), V(x, 0.54, 0.33), V(x, 0.32, 0.35), V(x, 0.1, 0.37), V(x, 0.03, 0.39)];
+      const hind = [V(x, 0.82, -0.4), V(x, 0.56, -0.33), V(x, 0.37, -0.53), V(x, 0.1, -0.49), V(x, 0.03, -0.47)];
+      g.add(loft(front, [0.06, 0.042, 0.024, 0.019, 0.021], [0.085, 0.058, 0.028, 0.023, 0.025], legCol));
+      g.add(loft(hind, [0.07, 0.05, 0.026, 0.019, 0.021], [0.11, 0.075, 0.032, 0.023, 0.025], legCol));
+      for (const leg of [front, hind]) { const h = new THREE.Mesh(hoofGeo, dark); h.position.set(x, 0.025, leg.at(-1).z + 0.006); g.add(h); }
+    }
+    // tail: a short, broad, flat tail lying down the rump from a root just under the skin; brown on the outside, white
+    // underneath — the white only shows when it flicks up (it swings back/up with +rotation.x)
+    const tail = new THREE.Group(); tail.position.set(0, 0.9, -0.545); tail.rotation.x = 0.55; g.add(tail);
+    const tailGeo = new THREE.SphereGeometry(1, 14, 10);                       // slender, narrowing to the tip (not a round disc)
+    { const pp = tailGeo.attributes.position; for (let i = 0; i < pp.count; i++) pp.setX(i, pp.getX(i) * (1 - 0.5 * Math.max(0, -pp.getY(i)))); tailGeo.computeVertexNormals(); }
+    const tTop = new THREE.Mesh(tailGeo, new THREE.MeshStandardMaterial({ color: 0x7a4c2a, roughness: 0.9 }));
+    tTop.scale.set(0.038, 0.1, 0.018); tTop.position.set(0, -0.088, -0.03); tail.add(tTop);
+    const tUnder = new THREE.Mesh(tailGeo, white); tUnder.scale.set(0.034, 0.092, 0.015); tUnder.position.set(0, -0.09, -0.018); tail.add(tUnder);
+    // neck: pivots low at the base of the neck in front of the withers; runs up its local +y, the head hangs off its end.
+    // Its base is buried deep in the chest, so tipping it down to graze never opens a gap
+    const neck = new THREE.Group(); neck.position.set(0, 0.83, 0.5); g.add(neck);
+    // (the base starts as a small dome so no open end can surface above the withers when the neck tips down)
+    neck.add(loft([V(0, -0.15, -0.03), V(0, -0.05, -0.04), V(0, 0.1, -0.01), V(0, 0.26, 0.03), V(0, 0.42, 0.03)],
+      [0.03, 0.115, 0.1, 0.072, 0.055], [0.03, 0.135, 0.125, 0.09, 0.066],
+      (c, q, u, cn) => c.copy(COAT).lerp(WHITE, sstep(cn, 0.35, 0.8) * sstep(u, 0.66, 0.82) * (1 - sstep(u, 0.94, 1)))));  // white throat patch
+    const head = new THREE.Group(); head.position.set(0, 0.42, 0.02); neck.add(head);
+    const headGeo = new THREE.SphereGeometry(1, 24, 16);                      // tapered: broad brow → narrow snout (+z)
+    { const pp = headGeo.attributes.position, col = new Float32Array(pp.count * 3), c = new THREE.Color();
+      for (let i = 0; i < pp.count; i++) { const ux = pp.getX(i), uy = pp.getY(i), uz = pp.getZ(i), k = 1 - 0.5 * Math.max(0, uz);
+        pp.setXYZ(i, ux * 0.075 * k, uy * 0.085 * k - 0.02 * Math.max(0, uz), uz * 0.17);
+        const band = sstep(uz, 0.66, 0.73) * (1 - sstep(uz, 0.83, 0.88)) * (1 - sstep(uy, 0.25, 0.55)); // white band behind the nose
+        const chin = sstep(-uy, 0.5, 0.75) * sstep(uz, 0.2, 0.45);
+        c.copy(COAT).lerp(WHITE, Math.max(band, chin)).lerp(NOSE, sstep(uz, 0.88, 0.94));
+        col.set([c.r, c.g, c.b], i * 3); }
+      headGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      headGeo.computeVertexNormals(); }
+    const headMesh = new THREE.Mesh(headGeo, hide); headMesh.position.z = 0.1; head.add(headMesh);
+    const ears = [], earGeo = (() => {
+      const s = new THREE.Shape(); s.moveTo(0, 0); s.quadraticCurveTo(0.065, 0.07, 0, 0.16); s.quadraticCurveTo(-0.065, 0.07, 0, 0);
+      const geo = new THREE.ShapeGeometry(s, 8), pp = geo.attributes.position;
+      for (let i = 0; i < pp.count; i++) pp.setZ(i, -Math.abs(pp.getX(i)) * 0.6);                   // cupped
+      geo.computeVertexNormals(); return geo; })();
+    const spike = (a, b, r) => {                                              // tapered, closed antler tine from a to b
+      const d = b.clone().sub(a), m = new THREE.Mesh(new THREE.ConeGeometry(r, d.length(), 8), bone);
+      m.position.copy(a).addScaledVector(d, 0.5); m.quaternion.setFromUnitVectors(Y, d.normalize()); head.add(m);
     };
     for (const sx of [-1, 1]) {
-      const x = sx * 0.095;                                                    // inside the 0.17 m half-width of the body
-      limb([V(x, 0.74, 0.34), V(x, 0.52, 0.34), V(x, 0.31, 0.36), V(x, 0.08, 0.38), V(x, 0.03, 0.4)],        // front: shoulder → elbow → knee → fetlock
-           [0.07, 0.05, 0.03, 0.022, 0.026], [coat, coat, shin, shin]);
-      limb([V(x, 0.76, -0.42), V(x, 0.53, -0.34), V(x, 0.36, -0.55), V(x, 0.08, -0.5), V(x, 0.03, -0.48)],    // hind: hip → stifle → hock → fetlock
-           [0.085, 0.06, 0.032, 0.022, 0.026], [coat, coat, shin, shin]);
-    }
-    // tail: brown on top, white underneath (two flattened cones)
-    // tail: a short flat tail hanging over the rump, pivoting at its root (flicks up); white underside
-    const tail = new THREE.Group(); tail.position.set(0, 0.93, -0.6); g.add(tail);
-    const tTop = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), coat); tTop.scale.set(0.045, 0.1, 0.025); tTop.position.set(0, -0.085, -0.03); tail.add(tTop);
-    const tUnder = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); tUnder.scale.set(0.038, 0.085, 0.02); tUnder.position.set(0, -0.09, -0.048); tail.add(tUnder);
-    tail.rotation.x = 0.25;
-    // neck: pivot at the withers; the neck runs up its local +y, the head hangs off its end
-    const neck = new THREE.Group(); neck.position.set(0, 0.9, 0.44); g.add(neck);
-    const neckMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.13, 0.52, 14), coat); neckMesh.position.y = 0.24; neckMesh.scale.set(0.85, 1, 1.15); neck.add(neckMesh);
-    const throat = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); throat.scale.set(0.05, 0.07, 0.035); throat.position.set(0, 0.42, 0.075); neck.add(throat);
-    const head = new THREE.Group(); head.position.set(0, 0.5, 0.02); neck.add(head);
-    const headGeo = new THREE.SphereGeometry(1, 20, 14);                      // tapered: broad brow → narrow snout (+z)
-    { const pp = headGeo.attributes.position;
-      for (let i = 0; i < pp.count; i++) { const ux = pp.getX(i), uy = pp.getY(i), uz = pp.getZ(i), k = 1 - 0.5 * Math.max(0, uz);
-        pp.setXYZ(i, ux * 0.075 * k, uy * 0.085 * k - 0.02 * Math.max(0, uz), uz * 0.17); }
-      headGeo.computeVertexNormals(); }
-    const headMesh = new THREE.Mesh(headGeo, coat); headMesh.position.z = 0.1; head.add(headMesh);
-    const muzzle = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), white); muzzle.scale.set(0.04, 0.032, 0.03); muzzle.position.set(0, -0.035, 0.235); head.add(muzzle);
-    const nose = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), dark); nose.scale.set(0.03, 0.022, 0.02); nose.position.set(0, -0.025, 0.268); head.add(nose);
-    const ears = [];
-    for (const sx of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.013, 10, 8), dark); eye.position.set(sx * 0.058, 0.03, 0.12); head.add(eye);
-      const earShape = new THREE.Shape(); earShape.moveTo(0, 0); earShape.quadraticCurveTo(0.06, 0.07, 0, 0.17); earShape.quadraticCurveTo(-0.06, 0.07, 0, 0);
-      const earGeo = new THREE.ShapeGeometry(earShape, 8);
-      { const pp = earGeo.attributes.position; for (let i = 0; i < pp.count; i++) pp.setZ(i, -Math.abs(pp.getX(i)) * 0.6); earGeo.computeVertexNormals(); } // cupped
-      const ear = new THREE.Group(); ear.position.set(sx * 0.055, 0.075, 0.02); ear.rotation.set(-0.2, sx * 0.5, -sx * 0.95); head.add(ear);
-      ear.add(new THREE.Mesh(earGeo, new THREE.MeshStandardMaterial({ color: 0x8b5a33, roughness: 0.9, side: THREE.DoubleSide })));
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.013, 10, 8), dark); eye.position.set(sx * 0.057, 0.03, 0.12); head.add(eye);
+      // ear: base sunk into the side of the crown behind the antlers, angled out
+      const ear = new THREE.Group(); ear.position.set(sx * 0.04, 0.052, 0.022); ear.rotation.set(-0.2, sx * 0.5, -sx * 0.95); head.add(ear);
+      ear.add(new THREE.Mesh(earGeo, earMat));
       ears.push(ear);
-      // antler: main beam sweeping out, back and up, then forward; three tines rising off it
-      const beam = [V(sx * 0.03, 0.09, 0.02), V(sx * 0.1, 0.17, -0.04), V(sx * 0.17, 0.27, -0.02), V(sx * 0.19, 0.36, 0.06), V(sx * 0.15, 0.42, 0.16)];
-      head.add(bentTube(beam, 0.011, bone, 0.04));
-      for (const [i, h, f] of [[1, 0.14, 0.02], [2, 0.16, 0.03], [3, 0.12, 0.04]]) {
-        const base = beam[i], tip = base.clone().add(V(-sx * 0.015, h, f));
-        head.add(bentTube([base, tip], 0.007, bone));
-      }
-      const burr = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.005, 6, 12), bone); burr.position.copy(beam[0]); burr.rotation.x = Math.PI / 2; head.add(burr);
+      // antler (white-tailed style): from a pedicle just under the crown the main beam rises, sweeps out and back, then
+      // curves forward; tines stand up off the beam, and a short brow tine points forward near the base
+      const beam = [V(sx * 0.03, 0.062, 0.06), V(sx * 0.06, 0.13, 0.04), V(sx * 0.12, 0.2, 0.0), V(sx * 0.17, 0.245, 0.05), V(sx * 0.165, 0.265, 0.14), V(sx * 0.12, 0.27, 0.21)];
+      head.add(bentTube(beam, 0.01, bone, 0.04));
+      spike(beam.at(-1), beam.at(-1).clone().add(V(-sx * 0.025, 0.012, 0.05)), 0.01);           // beam tip
+      spike(beam[1], beam[1].clone().add(V(0, 0.04, 0.035)), 0.007);                             // brow tine
+      for (const [i, h] of [[2, 0.12], [3, 0.13], [4, 0.09]]) spike(beam[i], beam[i].clone().add(V(-sx * 0.012, h, 0.015)), 0.008);
+      const burr = new THREE.Mesh(new THREE.SphereGeometry(0.015, 10, 6), bone); burr.scale.y = 0.6; burr.position.set(sx * 0.032, 0.076, 0.057); head.add(burr);
     }
     const [x, z] = DEER_AT;
     g.position.set(x, 0, z); g.rotation.y = Math.atan2(0 - x, 3 - z) + 0.6;                // three-quarters toward the camp
@@ -6242,17 +6286,27 @@ life = (() => {
     for (let i = 0; i < n && s0 + i < d.length; i++) { const u = i / n, f = f0 + (f1 - f0) * u; ph += 2 * Math.PI * f / SR; d[s0 + i] += Math.sin(ph) * Math.sin(Math.PI * u) ** 2 * amp; } };
   const bufs = {
     breeze: buf(12, (d, n) => { let b = 0; for (let i = 0; i < n; i++) { b = (b + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = b * (0.55 + 0.45 * Math.sin(2 * Math.PI * 2 * i / n)); } }),
-    birds: [0, 1, 2].map(() => buf(9, d => { for (let p = 0; p < 5; p++) { let t = Math.random() * 8.2; const f = rnd(2600, 4200), notes = 3 + (Math.random() * 4 | 0);
-      for (let k = 0; k < notes; k++) { chirp(d, t, rnd(0.05, 0.13), f * rnd(0.9, 1.2), f * rnd(0.7, 1.4), rnd(0.5, 1)); t += rnd(0.08, 0.18); } } })),
+    // birds (per user: were too noisy): two short, lower, gentler phrases in a 16 s loop each — long quiet gaps
+    birds: [0, 1, 2].map(() => buf(16, d => { for (let p = 0; p < 2; p++) { let t = 1 + p * 7 + Math.random() * 5; const f = rnd(1900, 2900), notes = 2 + (Math.random() * 3 | 0);
+      for (let k = 0; k < notes; k++) { chirp(d, t, rnd(0.08, 0.16), f * rnd(0.95, 1.1), f * rnd(0.85, 1.15), rnd(0.5, 0.9)); t += rnd(0.14, 0.26); } } })),
     crickets: buf(4, d => { for (const [f, step, off] of [[4400, 0.62, 0.0], [4900, 0.71, 0.3]]) for (let t = off; t < 3.9; t += step) for (let p = 0; p < 4; p++) chirp(d, t + p * 0.032, 0.02, f, f, 0.8); }),
-    fire: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { lp += 0.02 * ((Math.random() * 2 - 1) - lp); d[i] = lp * 3; }
-      for (let c = 0; c < 70; c++) { const s0 = Math.random() * n | 0, len = rnd(0.004, 0.025) * SR | 0, a = rnd(0.3, 1); for (let i = 0; i < len && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * a * Math.exp(-6 * i / len); } }),
+    // fire (per user: was too noisy): a warm low rumble with a few soft, low-passed pops — the old one was mostly
+    // loud white-noise clicks (70 per 4 s, normalised to full scale)
+    fire: buf(6, (d, n) => {
+      let lp = 0, lp2 = 0;
+      for (let i = 0; i < n; i++) { lp += 0.01 * ((Math.random() * 2 - 1) - lp); lp2 += 0.05 * (lp - lp2); d[i] = lp2 * 6; }   // soft rumble
+      for (let c = 0; c < 22; c++) {                                                                                       // gentle pops
+        const s0 = Math.random() * n | 0, len = rnd(0.01, 0.04) * SR | 0, a = rnd(0.08, 0.25); let f = 0;
+        for (let i = 0; i < len && s0 + i < n; i++) { f += 0.35 * ((Math.random() * 2 - 1) - f); d[s0 + i] += f * a * Math.exp(-5 * i / len); }
+      }
+    }),
     water: buf(6, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { lp += 0.05 * ((Math.random() * 2 - 1) - lp); d[i] = lp * (0.4 + 0.6 * Math.max(0, Math.sin(2 * Math.PI * 4 * i / n)) ** 2); } }),
     rain: buf(4, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; lp += 0.3 * (w - lp); d[i] = (w - lp) * 0.6 + lp * 0.4; }
       for (let c = 0; c < 120; c++) { const s0 = Math.random() * n | 0; for (let i = 0; i < 200 && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * Math.exp(-i / 40) * 0.8; } }),
   };
   const amb = b => { const a = new THREE.Audio(listener); a.setBuffer(b); a.setLoop(true); a.setVolume(0); return a; };
-  const pos = (b, at, ref, parent = scene) => { const a = new THREE.PositionalAudio(listener); a.setBuffer(b); a.setLoop(true); a.setRefDistance(ref); a.setRolloffFactor(1.3); a.setVolume(0);
+  const pos = (b, at, ref, parent = scene) => { const a = new THREE.PositionalAudio(listener); a.setBuffer(b); a.setLoop(true); a.setRefDistance(ref); a.setRolloffFactor(1.6); a.setVolume(0);
+    a.panner.panningModel = 'equalpower';   // plain stereo panning — the default HRTF convolution costs CPU every audio frame
     const o = new THREE.Object3D(); o.position.copy(at); o.add(a); parent.add(o); return a; };
   const snd = {
     breeze: amb(bufs.breeze), crickets: amb(bufs.crickets), rain: amb(bufs.rain),
@@ -6263,12 +6317,13 @@ life = (() => {
   let soundOn = true, started = false;
   const applySound = () => {
     listener.setMasterVolume(soundOn ? 1 : 0);
-    snd.breeze.setVolume(rain ? 0.12 : night ? 0.18 : 0.32);
-    for (const b of snd.birds) b.setVolume(!night && !rain ? 0.55 : 0);
-    snd.crickets.setVolume(night && !rain ? 0.3 : 0);
-    snd.rain.setVolume(rain ? 0.55 : 0);
-    snd.fire.setVolume(night ? 1.0 : 0.75);
-    snd.water.setVolume(0.6);
+    // quieter mix overall (per user: fire and birds were too noisy)
+    snd.breeze.setVolume(rain ? 0.08 : night ? 0.12 : 0.2);
+    for (const b of snd.birds) b.setVolume(!night && !rain ? 0.16 : 0);
+    snd.crickets.setVolume(night && !rain ? 0.14 : 0);
+    snd.rain.setVolume(rain ? 0.4 : 0);
+    snd.fire.setVolume(night ? 0.42 : 0.3);
+    snd.water.setVolume(0.35);
   };
   const startAudio = () => {
     if (started) return;
@@ -6304,12 +6359,12 @@ life = (() => {
     }
     if (t > deer.until) { deer.graze = !deer.graze; deer.until = t + (deer.graze ? rnd(4, 8) : rnd(2, 4)); }
     deer.k += ((deer.graze ? 1 : 0) - deer.k) * Math.min(1, dt * 1.5);
-    deer.neck.rotation.x = THREE.MathUtils.lerp(0.5, 2.2, deer.k);                     // neck up (head high) ↔ down to the grass
-    deer.head.rotation.x = THREE.MathUtils.lerp(-0.25, -0.65, deer.k);                  // counters the neck tilt: head level when up, muzzle down when grazing
+    deer.neck.rotation.x = THREE.MathUtils.lerp(0.6, 2.7, deer.k);                     // neck up (head high) ↔ down to the grass
+    deer.head.rotation.x = THREE.MathUtils.lerp(-0.3, -1.2, deer.k);                  // counters the neck tilt: head near level when up, muzzle down in the grass when grazing
     deer.head.rotation.y = deer.graze ? Math.sin(t * 1.7) * 0.08 : Math.sin(t * 0.8) * 0.5; // nibbling / looking round
     if (t > deer.twitch) { deer.twitch = t + rnd(1.5, 4); deer.ears[Math.random() * 2 | 0].userData.flick = 1; }
     for (const e of deer.ears) { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 4); e.rotation.x = -0.2 - 0.5 * Math.sin(Math.PI * e.userData.flick); }
-    deer.tail.rotation.x = 0.25 - Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.1;             // hangs, occasionally flicks up
+    deer.tail.rotation.x = 0.55 + Math.max(0, Math.sin(t * 2.3)) ** 8 * 1.3;             // lies on the rump, now and then flicks up (white side)
     if (fireflies.visible) {
       ff.forEach((f, i) => {
         ffPos.set([f.x + Math.sin(t * 0.3 * f.f + f.ph) * 0.8, f.y + Math.sin(t * 0.5 * f.f + f.ph * 2) * 0.3, f.z + Math.cos(t * 0.25 * f.f + f.ph) * 0.8], i * 3);
@@ -6404,36 +6459,39 @@ const campers = (() => {
   ];
 
   // ---- a low-poly person (feet at y 0, facing +z): pelvis → torso/head, hips → thigh → knee → shin, shoulders → elbows
+  // geometry and materials are shared by all campers (perf); tiny parts (nose, eyes, hands, neck) don't cast shadows
+  const PG = {}, PM = {}, pg = (k, mk) => PG[k] ||= mk();
   const makePerson = (skin, shirt, pants, hair) => {
-    const M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 });
+    const M = c => PM[c] ||= new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 });
     const mSkin = M(skin), mShirt = M(shirt), mPants = M(pants), mShoe = M(0x2a2522), mHair = M(hair);
     const root = new THREE.Group(), pelvis = new THREE.Group(); pelvis.position.y = 0.92; root.add(pelvis); root.userData.dynamic = true;
     const add = (parent, geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); parent.add(m); return m; };
-    add(pelvis, new THREE.CapsuleGeometry(0.15, 0.32, 4, 10), mShirt, 0, 0.33, 0, 1, 1, 0.66);      // torso
-    add(pelvis, new THREE.CapsuleGeometry(0.135, 0.05, 4, 10), mPants, 0, 0.03, 0, 1, 1, 0.7);      // hips
-    add(pelvis, new THREE.CylinderGeometry(0.042, 0.05, 0.1, 8), mSkin, 0, 0.62, 0);                 // neck
+    add(pelvis, pg('torso', () => new THREE.CapsuleGeometry(0.15, 0.32, 4, 10)), mShirt, 0, 0.33, 0, 1, 1, 0.66);      // torso
+    add(pelvis, pg('hips', () => new THREE.CapsuleGeometry(0.135, 0.05, 4, 10)), mPants, 0, 0.03, 0, 1, 1, 0.7);      // hips
+    add(pelvis, pg('neck', () => new THREE.CylinderGeometry(0.042, 0.05, 0.1, 8)), mSkin, 0, 0.62, 0);                 // neck
     const head = new THREE.Group(); head.position.y = 0.76; pelvis.add(head);
-    add(head, new THREE.SphereGeometry(0.105, 16, 12), mSkin, 0, 0, 0, 0.92, 1.05, 1);
-    add(head, new THREE.SphereGeometry(0.112, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), mHair, 0, 0.02, -0.01, 0.95, 1.05, 1.05);
-    add(head, new THREE.SphereGeometry(0.018, 8, 6), mSkin, 0, -0.01, 0.1);                          // nose
-    for (const sx of [-1, 1]) add(head, new THREE.SphereGeometry(0.011, 6, 6), M(0x1b1b1d), sx * 0.035, 0.02, 0.092);
+    add(head, pg('head', () => new THREE.SphereGeometry(0.105, 16, 12)), mSkin, 0, 0, 0, 0.92, 1.05, 1);
+    add(head, pg('hair', () => new THREE.SphereGeometry(0.112, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55)), mHair, 0, 0.02, -0.01, 0.95, 1.05, 1.05);
+    add(head, pg('nose', () => new THREE.SphereGeometry(0.018, 8, 6)), mSkin, 0, -0.01, 0.1);                          // nose
+    for (const sx of [-1, 1]) add(head, pg('eye', () => new THREE.SphereGeometry(0.011, 6, 6)), M(0x1b1b1d), sx * 0.035, 0.02, 0.092);
     const legs = [-1, 1].map(sx => {
       const hip = new THREE.Group(); hip.position.set(sx * 0.08, 0, 0); pelvis.add(hip);
-      add(hip, new THREE.CylinderGeometry(0.065, 0.075, 0.44, 10), mPants, 0, -0.22, 0);
+      add(hip, pg('thigh', () => new THREE.CylinderGeometry(0.065, 0.075, 0.44, 10)), mPants, 0, -0.22, 0);
       const knee = new THREE.Group(); knee.position.y = -0.44; hip.add(knee);
-      add(knee, new THREE.CylinderGeometry(0.048, 0.06, 0.42, 10), mPants, 0, -0.21, 0);
-      add(knee, new THREE.BoxGeometry(0.095, 0.065, 0.22), mShoe, 0, -0.45, 0.04);
+      add(knee, pg('shin', () => new THREE.CylinderGeometry(0.048, 0.06, 0.42, 10)), mPants, 0, -0.21, 0);
+      add(knee, pg('shoe', () => new THREE.BoxGeometry(0.095, 0.065, 0.22)), mShoe, 0, -0.45, 0.04);
       return { hip, knee };
     });
     const arms = [-1, 1].map(sx => {
       const sh = new THREE.Group(); sh.position.set(sx * 0.2, 0.53, 0); pelvis.add(sh);
-      add(sh, new THREE.CylinderGeometry(0.045, 0.052, 0.29, 8), mShirt, 0, -0.145, 0);
+      add(sh, pg('upper', () => new THREE.CylinderGeometry(0.045, 0.052, 0.29, 8)), mShirt, 0, -0.145, 0);
       const el = new THREE.Group(); el.position.y = -0.29; sh.add(el);
-      add(el, new THREE.CylinderGeometry(0.037, 0.043, 0.26, 8), mSkin, 0, -0.13, 0);
-      add(el, new THREE.SphereGeometry(0.045, 8, 6), mSkin, 0, -0.28, 0);
+      add(el, pg('fore', () => new THREE.CylinderGeometry(0.037, 0.043, 0.26, 8)), mSkin, 0, -0.13, 0);
+      add(el, pg('hand', () => new THREE.SphereGeometry(0.045, 8, 6)), mSkin, 0, -0.28, 0);
       return { sh, el, sx };
     });
-    root.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    const small = new Set([PG.nose, PG.eye, PG.hand, PG.neck]);
+    root.traverse(o => { if (o.isMesh) o.castShadow = !small.has(o.geometry); });
     scene.add(root);
     return { root, pelvis, legs, arms, head };
   };
@@ -6488,8 +6546,13 @@ const campers = (() => {
     p.arms.forEach((a, i) => { ease(a.sh.rotation, 'x', shX[i], c.mode === 'walk' ? 1 : f); ease(a.el.rotation, 'x', elX[i], f); ease(a.sh.rotation, 'z', shZ[i], f); });
     p.head.rotation.y = c.mode === 'walk' ? 0 : Math.sin(t * 0.4 + c.ph) * 0.4;  // glancing round
   }
+  // off by default (per user): hidden and not simulated until switched on (key 7)
+  let on = false;
+  for (const c of people) c.p.root.visible = false;
+  const setOn = v => { on = v; for (const c of people) c.p.root.visible = v; };
   let wasRaining = false;
   function update(t, dt) {
+    if (!on) return;
     const rainNow = raining;
     for (const c of people) {
       if (rainNow !== wasRaining && c.spot && !!c.spot.rain !== rainNow) choose(c);   // rain starts → shelter; stops → wander off
@@ -6519,7 +6582,7 @@ const campers = (() => {
     }
     wasRaining = rainNow;
   }
-  return { update };
+  return { update, setOn };
 })();
 
 function layoutTents() {
@@ -6537,6 +6600,7 @@ let dockCloth = null;
 
 relayout();
 window.__scene = scene; window.__camera = camera; window.__controls = controls; window.__renderer = renderer; // debug handles (MCP / console)
+window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun };                                       // profiling handles
 
 function updateCoverage() {
   const xC = gap / 2 + W / 2;                    // tent centerline (= its roof ridge x)
@@ -6582,6 +6646,7 @@ document.getElementById('nightMode').addEventListener('change', e => setNight(e.
 document.getElementById('lightsOn').addEventListener('change', e => { lightsOn = e.target.checked; applyLights(); });
 document.getElementById('rainOn').addEventListener('change', e => { raining = e.target.checked; applyWeather(); });
 document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
+document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
@@ -6590,7 +6655,7 @@ const viewLink = () => {
   const tgt = walking ? camera.position.clone().addScaledVector(dir, 5) : controls.target;
   const f = v => v.toFixed(2);
   const q = [camera.position.x, camera.position.y, camera.position.z, tgt.x, tgt.y, tgt.z].map(f).join(',');
-  return location.href.split('#')[0] + '#v=' + q + (isNight ? '&n=1' : '') + (raining ? '&r=1' : '');
+  return location.href.split('#')[0] + '#v=' + q + (isNight ? '&n=1' : '') + (raining ? '&r=1' : '') + (document.getElementById('campersOn').checked ? '&c=1' : '');
 };
 document.getElementById('shareBtn').addEventListener('click', async () => {
   const url = viewLink();
@@ -6614,6 +6679,7 @@ document.getElementById('photoBtn').addEventListener('click', () => {
     if (v.length === 6 && v.every(Number.isFinite)) { camera.position.set(v[0], v[1], v[2]); controls.target.set(v[3], v[4], v[5]); controls.update(); }
     if (/[&#]n=1/.test(location.hash)) document.getElementById('nightMode').click();
     if (/[&#]r=1/.test(location.hash)) document.getElementById('rainOn').click();
+    if (/[&#]c=1/.test(location.hash)) document.getElementById('campersOn').click();
   }
 }
 document.getElementById('closePanel').addEventListener('click', () => {
@@ -6641,6 +6707,7 @@ addEventListener('resize', () => {
   labelRenderer.setSize(innerWidth, innerHeight);
 });
 
+applyLights();                               // start-up: drop the lights that are dark by day from the shaders
 await stage('Optimising…', 92);
 // ---------- PERFORMANCE (per user): merge static meshes ----------
 // Each static group (tents, the Block 10+09+05 unit, sofa, tables, chairs, gear, fire pit, pond props, hammock,
