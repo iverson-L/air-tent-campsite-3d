@@ -880,7 +880,7 @@ const TRACK = (() => {
   const spur = new THREE.CatmullRomCurve3([P(15.4, 2.4), P(26, 3.0), P(40, 0.6), P(54, 2.4), P(j.x, j.z)], false, 'centripetal');   // starts just ahead of both parked vehicles
   // the T junction (per user: add a radius): two fillet curves from the spur, ~10 m before the loop, sweeping into the
   // loop each way (quadratic Béziers through the junction point, so they leave the spur and meet the loop tangentially)
-  const R = 10, S = spur.getPointAt(1 - R / spur.getLength()), dl = R / loop.getLength();
+  const R = 14, S = spur.getPointAt(1 - R / spur.getLength()), dl = R / loop.getLength();   // 14 m arms: a gentler bend
   const fillets = [dl, 1 - dl].map(t => new THREE.QuadraticBezierCurve3(S, j, loop.getPointAt(t)).getSpacedPoints(30));
   const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90), ...fillets];
   // what's drawn: the spur stops where the fillets start; a short stub fills the middle of the junction, drawn under the
@@ -953,9 +953,17 @@ scene.add(ground);
     for (let i = 0; i < ps.length; i++) {
       const a = closed ? ps[i ? i - 1 : m1 - 1] : ps[Math.max(0, i - 1)], b = closed ? ps[i < m1 ? i + 1 : 1] : ps[Math.min(m1, i + 1)];
       const tx = b.x - a.x, tz = b.z - a.z, L = Math.hypot(tx, tz) || 1, nx = -tz / L * WH, nz = tx / L * WH;
+      // never offset the INSIDE of a bend further than its radius (per user: a dark folded wedge at the T junction —
+      // on the tight fillet the inner edge crossed past the bend's centre and the strip folded over itself)
+      let lim = Infinity, inner = 0;
+      { const p0 = closed ? ps[i ? i - 1 : m1 - 1] : ps[Math.max(0, i - 1)], p1 = ps[i], p2 = closed ? ps[i < m1 ? i + 1 : 1] : ps[Math.min(m1, i + 1)];
+        const ax = p1.x - p0.x, az = p1.z - p0.z, bx = p2.x - p1.x, bz = p2.z - p1.z, la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+        if (la > 1e-6 && lb > 1e-6) { const ang = Math.acos(Math.max(-1, Math.min(1, (ax * bx + az * bz) / (la * lb))));
+          if (ang > 1e-4) { lim = 0.8 * ((la + lb) / 2) / ang; inner = Math.sign((bx / lb - ax / la) * nx + (bz / lb - az / la) * nz); } } }
       if (i) len += ps[i].distanceTo(ps[i - 1]);
       const al = fadeStart ? Math.min(1, len / fadeStart) : 1;
-      for (let c = 0; c < C; c++) { const f = 1 - 2 * c / (C - 1), px = ps[i].x + nx * f, pz = ps[i].z + nz * f;
+      for (let c = 0; c < C; c++) { let f = 1 - 2 * c / (C - 1); if (inner && Math.sign(f) === inner) f = inner * Math.min(Math.abs(f), lim / WH);
+        const px = ps[i].x + nx * f, pz = ps[i].z + nz * f;
         pos.push(px, groundH(px, pz) + y + (Math.hypot(px, pz) > FLAT_R ? 0.08 : 0), pz); uv.push(c / (C - 1), len * vs); col.push(1, 1, 1, al); }
       if (i) for (let c = 0; c < C - 1; c++) { const k = i * C + c, kp = k - C; idx.push(kp, k, kp + 1, kp + 1, k, k + 1); }
     }
