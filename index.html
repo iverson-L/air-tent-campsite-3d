@@ -852,7 +852,7 @@ const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 1.8, // 
                                                     // tree's canopy is ≥ 2.2 m away and none is in front
 // fixed spots for the camp-life props (per user), kept clear of the random trees
 const HAMMOCK = { a: [-12.5, -6.0], b: [-12.5, -2.2] };   // the two broadleaf trees the hammock hangs between
-const SUV_AT = [13.8, -2.5], DEER_AT = [-15.5, -11.0];
+const SUV_AT = [13.8, -2.5], TRUCK_AT = [14.4, -9.6], DEER_AT = [-15.5, -11.0];
 const pondR = a => POND.R * (1 + 0.11 * Math.sin(2 * a + 1.0) + 0.07 * Math.sin(3 * a + 2.2) + 0.04 * Math.sin(5 * a + 0.4));
 const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
   const a = i / n * Math.PI * 2, r = pondR(a) * k;
@@ -4555,7 +4555,7 @@ const leafTex = makeLeafTexture();     leafTex.repeat.set(4, 3);   // broadleaf 
 const treeSpots = [[-9.5, 6.5, 2.28], [9.5, -6.5, 2.28], // anchor trees near site corners (string lights), r = 1.9 × 1.2
   [POND.x, POND.z, POND.R * POND.sx * 1.25 + 1.5],           // keep the pond and its banks clear of trees
   [...HAMMOCK.a, 2.4], [...HAMMOCK.b, 2.4],                  // the hammock's two trees (placed as broadleafs below)
-  [...SUV_AT, 3.6], [...DEER_AT, 2.6]];                       // parked SUV, grazing deer
+  [...SUV_AT, 3.6], [...TRUCK_AT, 4.2], [...DEER_AT, 2.6]];                       // parked SUV, grazing deer
 function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
   const out = [];
   let guard = 0;
@@ -5890,54 +5890,74 @@ const treeLights = [[[-9.5, 6.5], [0, 3]], [[9.5, -6.5], [0, -3]]].map(([[tx, tz
 
 // ---------- night mode ----------
 let isNight = false;
+// ---------- day ↔ night and rain fade in and out (per user: they used to switch instantly) ----------
+// isNight / raining flip at once (the logic: animals, fireflies, campers…), while two blend factors ease toward them —
+// nightK over ~5 s, rainK over ~4 s — and everything you SEE and HEAR follows those: sun and sky light, fog colour and
+// range, a night sky dome fading in over the day one, stars, sun disc, clouds, the overcast tint, firelight, the
+// lanterns / string / table lights, rain streaks and the bird / cricket / rain mix. The pond's night reflections can
+// only swap, so they swap half-way.
+let nightK = 0, rainK = 0, pondNight = false;
+const skyNightMat = new THREE.MeshBasicMaterial({ map: skyNightTex, side: THREE.BackSide, fog: false, transparent: true, opacity: 0, depthWrite: false });
+const skyNight = new THREE.Mesh(new THREE.SphereGeometry(169, 32, 16), skyNightMat); skyNight.renderOrder = -1; skyGroup.add(skyNight);
+const _fogC = new THREE.Color(), _fc2 = new THREE.Color(), _sunC = new THREE.Color();
+const FOG = { day: new THREE.Color(0xcfe6f7), night: new THREE.Color(0x1a2440), dayRain: new THREE.Color(0x9ea8b2), nightRain: new THREE.Color(0x151b24) };
+const SKYTINT = { day: new THREE.Color(0x9aa2ab), night: new THREE.Color(0x6b7280) }, WHITE = new THREE.Color(0xffffff);
+const SUNC = { day: new THREE.Color(0xfff2d9), night: new THREE.Color(0x9db4ff) };
+const lerp = THREE.MathUtils.lerp;
+function fogBase() {
+  _fogC.copy(FOG.day).lerp(FOG.night, nightK); _fc2.copy(FOG.dayRain).lerp(FOG.nightRain, nightK); _fogC.lerp(_fc2, rainK);
+  return { c: _fogC, n: lerp(30, 14, rainK), f: lerp(90, 60, rainK) };
+}
+function applyLook() {                                 // everything visual, from nightK / rainK
+  const n = nightK, r = rainK;
+  sun.intensity = lerp(1.6, 0.35, n) * lerp(1, 0.3, r);
+  sun.color.copy(_sunC.copy(SUNC.day).lerp(SUNC.night, n));
+  hemi.intensity = lerp(0.85, 0.25, n) * lerp(1, 0.9, r);
+  if (!wasUnder) { const fb = fogBase(); scene.fog.color.copy(fb.c); scene.fog.near = fb.n; scene.fog.far = fb.f; }
+  skyNightMat.opacity = n;
+  _fc2.copy(SKYTINT.day).lerp(SKYTINT.night, n); skyMat.color.copy(WHITE).lerp(_fc2, r); skyNightMat.color.copy(skyMat.color);
+  stars.visible = n > 0.01; stars.material.opacity = 0.9 * n * (1 - 0.7 * r);
+  for (const c of stars.children) c.material.opacity = 0.95 * n * (1 - 0.7 * r);
+  const sunVis = (1 - n) * (1 - r); sunSprite.visible = sunVis > 0.01; sunSprite.material.opacity = sunVis;
+  setCloudOpacity(lerp(lerp(0.85, 0.15, n), 1, r));
+  if ((n > 0.5) !== pondNight) { pondNight = n > 0.5; pond.setNight(pondNight); }
+  applyLights();
+  life?.setMix(n, r);
+}
+function blendLook(dt) {                               // called every frame; does nothing once settled
+  const tn = isNight ? 1 : 0, tr = raining ? 1 : 0;
+  if (nightK === tn && rainK === tr) return;
+  nightK = tn > nightK ? Math.min(tn, nightK + dt / 5) : Math.max(tn, nightK - dt / 5);
+  rainK = tr > rainK ? Math.min(tr, rainK + dt / 4) : Math.max(tr, rainK - dt / 4);
+  applyLook();
+}
 function setNight(on) {
   isNight = on;
-  skyMat.map = on ? skyNightTex : skyDayTex;
-  skyMat.needsUpdate = true;
-  scene.fog.color.set(on ? 0x1a2440 : 0xcfe6f7);
   wasUnder = null;                            // re-apply the underwater fog next frame if diving
-  sunSprite.visible = !on;
-  stars.visible = on;
-  setCloudOpacity(on ? 0.15 : 0.85);
-  sun.intensity = on ? 0.35 : 1.6;          // moonlight
-  sun.color.set(on ? 0x9db4ff : 0xfff2d9);
-  hemi.intensity = on ? 0.25 : 0.85;
-  pond.setNight(on);                          // water reflects the night sky
-  fireLight.intensity = on ? 2.6 : 1.2;
-  applyLights();
-  applyWeather();                             // rain darkens day or night on top
   life?.setNight(on);
 }
-// RAIN (key 5, per user): overcast — sun ×0.3, grey sky + heavier haze — on top of day or night
-function fogBase() { return raining ? { c: isNight ? 0x151b24 : 0x9ea8b2, n: 14, f: 60 } : { c: isNight ? 0x1a2440 : 0xcfe6f7, n: 30, f: 90 }; }
+// RAIN (key 5, per user): overcast — sun ×0.3, grey sky + heavier haze — on top of day or night (eased by rainK)
 function applyWeather() {
-  const fb = fogBase();
-  scene.fog.color.set(fb.c); scene.fog.near = fb.n; scene.fog.far = fb.f;
-  wasUnder = null;                            // the underwater fog re-applies itself next frame if diving
-  sun.intensity = (isNight ? 0.35 : 1.6) * (raining ? 0.3 : 1);
-  hemi.intensity = (isNight ? 0.25 : 0.85) * (raining ? 0.9 : 1);
-  setCloudOpacity(raining ? 1 : (isNight ? 0.15 : 0.85));
-  skyMat.color.set(raining ? (isNight ? 0x6b7280 : 0x9aa2ab) : 0xffffff);
-  sunSprite.visible = !isNight && !raining;
+  wasUnder = null;
   life?.setWeather(raining);
 }
 // all the camp's artificial lights — tent lanterns, table lanterns, string/festoon bulbs — follow the Lights switch
 // (key 3, per user) and night mode; the campfire stays lit
 let lightsOn = true;
 function applyLights() {
-  const night = isNight && lightsOn;
-  bulbMat.emissiveIntensity = night ? 2.4 : 0;                  // string bulbs glow
-  stringLight.intensity = night ? 1.6 : 0;
-  for (const l of treeLights) l.intensity = night ? 2.6 : 0;   // the anchor trees the strings are tied to
-  for (const l of tableLamps) { l.glow.emissiveIntensity = night ? 1.8 : 0; l.light.intensity = night ? 0.9 : 0; }
+  const nk = lightsOn ? nightK : 0;                              // night-only lights fade with the dusk / dawn
+  bulbMat.emissiveIntensity = 2.4 * nk;                          // string bulbs glow
+  stringLight.intensity = 1.6 * nk;
+  for (const l of treeLights) l.intensity = 2.6 * nk;          // the anchor trees the strings are tied to
+  for (const l of tableLamps) { l.glow.emissiveIntensity = 1.8 * nk; l.light.intensity = 0.9 * nk; }
   // tent lanterns: on by day (they light the interiors), brighter at night; the mesh screens glow warm from inside
   for (const t of [tentL, tentR, block05, u3b10, u3b09, u3b05, solo05]) {
     const L = t.userData.lantern, G = t.userData.lanternGlow;
     if (L.userData.base === undefined) { L.userData.base = L.intensity; G.userData.base = G.emissiveIntensity; }
-    L.intensity = lightsOn ? L.userData.base * (isNight ? 3 : 1) : 0;
+    L.intensity = lightsOn ? L.userData.base * (1 + 2 * nightK) : 0;
     G.emissiveIntensity = lightsOn ? G.userData.base : 0;
-    t.userData.matGableMesh.emissive.set(night ? 0xffb46a : 0x000000);
-    t.userData.matGableMesh.emissiveIntensity = night ? 0.3 : 0;
+    t.userData.matGableMesh.emissive.set(0xffb46a);
+    t.userData.matGableMesh.emissiveIntensity = 0.3 * nk;
   }
   // (per user: performance) a light at zero brightness still costs every pixel in three.js — hide dark ones, so by
   // day the string/tree/table lights drop out of the shaders entirely (switching day ↔ night recompiles once)
@@ -6112,6 +6132,38 @@ life = (() => {
   //       with mesh inserts, slatted grille, round LED headlights in black pods, amber indicator "bullets" on the wings,
   //       mirrors, ladder roof rack, 5-spoke wheels on chunky tyres, spare wheel on the side-hinged rear door.
   //       Right-hand drive (driver on local −x). No badges. =====
+  // vehicle headlights (shared by the G-Class and the Cybertruck): a SpotLight per lamp (off until L) and the visible
+  // beams (per user: "headlights beam visible at night") — a soft additive cone from each lamp, bright at the lens and
+  // fading out over 9 m, faint at its silhouette edges so it reads as light in the air, plus a glow flare on each lens.
+  // Strength follows night / rain (car.update sets uI). lamps: [[x, y, z], …] in the vehicle's frame, facing +z.
+  function addBeams(g, lamps) {
+    const beams = lamps.map(([x, y, z]) => {
+      const l = new THREE.SpotLight(0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(x, y, z + 0.04);
+      l.target.position.set(x * 1.3, 0, z + 14); g.add(l, l.target); l.visible = false; return l;
+    });
+    const beamGroup = new THREE.Group(); beamGroup.userData.dynamic = true; beamGroup.visible = false; g.add(beamGroup);
+    const BL = 9, coneGeo = new THREE.ConeGeometry(1.9, BL, 28, 8, true);
+    coneGeo.translate(0, -BL / 2, 0);                                     // apex at the lamp
+    { const pp = coneGeo.attributes.position, tA = new Float32Array(pp.count); for (let i = 0; i < pp.count; i++) tA[i] = -pp.getY(i) / BL;
+      coneGeo.setAttribute('aT', new THREE.BufferAttribute(tA, 1)); }
+    coneGeo.rotateX(-Math.PI / 2 - 0.06);                                 // pointing ahead (+z), dipped a little
+    const beamMat = new THREE.ShaderMaterial({
+      uniforms: { uI: { value: 0 }, uC: { value: new THREE.Color(0xfff1d6) } },
+      vertexShader: `attribute float aT; varying float vT; varying vec3 vN; varying vec3 vV;
+        void main() { vT = aT; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: `uniform float uI; uniform vec3 uC; varying float vT; varying vec3 vN; varying vec3 vV;
+        void main() { float facing = pow(abs(dot(normalize(vN), normalize(vV))), 1.4);
+          float a = uI * pow(1.0 - vT, 1.7) * smoothstep(0.0, 0.04, vT) * (0.15 + 0.85 * facing);
+          gl_FragColor = vec4(uC, a); }`,                  // additive blending multiplies by alpha itself
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    const flareMat = new THREE.SpriteMaterial({ map: makeSunTexture(128), color: 0xfff4e0, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    for (const [x, y, z] of lamps) {
+      const cone = new THREE.Mesh(coneGeo, beamMat); cone.position.set(x, y, z); cone.renderOrder = 5; cone.frustumCulled = false; beamGroup.add(cone);
+      const fl = new THREE.Sprite(flareMat); fl.scale.setScalar(0.9); fl.position.set(x, y, z + 0.02); beamGroup.add(fl);
+    }
+    return { beams, beamGroup, beamMat, flareMat };
+  }
   let carRig = null;
   {
     const g = new THREE.Group();
@@ -6254,40 +6306,122 @@ life = (() => {
       const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; sp.add(t);
       const cov = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 28), black); cov.rotation.z = Math.PI / 2; cov.position.x = 0.02; sp.add(cov);
       box(0.14, 0.12, 0.1, black, RX + 0.05, 1.16, -0.08, rearPivot); }
-    // headlight beams (off until switched on in the car — L)
-    const beams = [-1, 1].map(sx => {
-      const l = new THREE.SpotLight(0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(sx * 0.68, 0.98, ZF + 0.1);
-      l.target.position.set(sx * 0.9, 0, ZF + 14); g.add(l, l.target); l.visible = false; return l;
-    });
-    // visible beams (per user: "headlights beam visible at night"): a soft additive cone from each lamp, bright at the
-    // lens and fading out over 9 m, faint at its silhouette edges so it reads as light in the air, plus a glow flare
-    // on each lens. Shown with the headlights; strength follows night / rain (car.update sets uI).
-    const beamGroup = new THREE.Group(); beamGroup.userData.dynamic = true; beamGroup.visible = false; g.add(beamGroup);
-    const BL = 9, coneGeo = new THREE.ConeGeometry(1.9, BL, 28, 8, true);
-    coneGeo.translate(0, -BL / 2, 0);                                     // apex at the lamp
-    { const pp = coneGeo.attributes.position, tA = new Float32Array(pp.count); for (let i = 0; i < pp.count; i++) tA[i] = -pp.getY(i) / BL;
-      coneGeo.setAttribute('aT', new THREE.BufferAttribute(tA, 1)); }
-    coneGeo.rotateX(-Math.PI / 2 - 0.06);                                 // pointing ahead (+z), dipped a little
-    const beamMat = new THREE.ShaderMaterial({
-      uniforms: { uI: { value: 0 }, uC: { value: new THREE.Color(0xfff1d6) } },
-      vertexShader: `attribute float aT; varying float vT; varying vec3 vN; varying vec3 vV;
-        void main() { vT = aT; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: `uniform float uI; uniform vec3 uC; varying float vT; varying vec3 vN; varying vec3 vV;
-        void main() { float facing = pow(abs(dot(normalize(vN), normalize(vV))), 1.4);
-          float a = uI * pow(1.0 - vT, 1.7) * smoothstep(0.0, 0.04, vT) * (0.15 + 0.85 * facing);
-          gl_FragColor = vec4(uC, a); }`,                  // additive blending multiplies by alpha itself
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    });
-    const flareMat = new THREE.SpriteMaterial({ map: makeSunTexture(128), color: 0xfff4e0, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
-    for (const sx of [-1, 1]) {
-      const cone = new THREE.Mesh(coneGeo, beamMat); cone.position.set(sx * 0.68, 0.98, ZF + 0.06); cone.renderOrder = 5; cone.frustumCulled = false; beamGroup.add(cone);
-      const fl = new THREE.Sprite(flareMat); fl.scale.setScalar(0.9); fl.position.set(sx * 0.68, 0.98, ZF + 0.08); beamGroup.add(fl);
-    }
+    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-0.68, 0.68].map(x => [x, 0.98, ZF + 0.06]));
     g.position.set(SUV_AT[0], 0, SUV_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    carRig = { g, doorPivot, rearPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat };
+    carRig = { g, doorPivot, rearPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat,
+      WB: 2.89, MAXF: 12.5, R: 1.0, circles: [-1.45, 0, 1.45], doorLocal: [-1.55, 0, 0.1], camDist: 6.4, ev: false, name: 'G-Class' };
+  }
+  // ===== Tesla Cybertruck (per user, from two photos): 568.3 cm long, 220.1 cm wide (241.3 with mirrors), ~185 cm
+  //       tall, wheelbase 3.81 m, 35" tyres. Parked behind the G-Class and drivable the same way (E at the driver's
+  //       door, RHD). Brushed stainless, faceted: the side profile is one straight line from the low nose up the hood
+  //       and windscreen to the apex over the cabin, then a long straight slope over the vault (bed) to the tail. The
+  //       body is an extruded profile whose upper part tilts inward above the 1.27 m crease; flat side panels below /
+  //       above the crease make the facets crisp. Angular arches with black flares, black bumpers and sills, a
+  //       full-width white light bar at the nose and red one at the tail, dark glass, black slatted vault cover,
+  //       mirrors, dark 6-spoke wheels. No badges. =====
+  let truckRig = null;
+  {
+    const g = new THREE.Group();
+    const steel = new THREE.MeshStandardMaterial({ color: 0xc9ccce, roughness: 0.34, metalness: 0.45 });   // brushed stainless (no env map: high metalness rendered near-black)
+    const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x0f1316, roughness: 0.08, metalness: 0.6 });
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, roughness: 0.45, metalness: 0.5 });
+    const barMat = new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 0.2, emissive: 0xffffff, emissiveIntensity: 0 });
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0x7a1010, roughness: 0.3, emissive: 0xff1a0a, emissiveIntensity: 0 });
+    const HL = 2.84, HW = 1.1, BELT = 1.27, TR = 0.44, AX = [1.905, -1.905], LEAN = 0.38;
+    const inset = y => y > BELT ? HW - LEAN * (y - BELT) : HW;           // half-width at height y (upper facets lean in)
+    const topY = z => z >= -0.1 ? 1.04 + (HL - z) * (0.86 / (HL + 0.1)) : 1.9 - (-0.1 - z) * (0.54 / (HL - 0.1));   // nose → apex → tail
+    // side profile (z, y): bottom with angular arches → nose → apex → tail
+    const prof = [[-HL, 0.62], [-2.66, 0.56]];
+    for (const a of [AX[1], AX[0]]) prof.push([a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]);
+    prof.push([2.7, 0.58], [HL, 0.72], [HL, 1.04], [-0.1, 1.9], [-HL, 1.36]);
+    const shape = new THREE.Shape(prof.map(([z, y]) => new THREE.Vector2(z, y)));
+    const body = new THREE.ExtrudeGeometry(shape, { depth: 2 * HW, bevelEnabled: false });
+    body.translate(0, 0, -HW); body.rotateY(-Math.PI / 2);                // shape x → world z, extrusion across x
+    { const pp = body.attributes.position; for (let i = 0; i < pp.count; i++) { const y = pp.getY(i); pp.setX(i, pp.getX(i) * inset(y) / HW); } body.computeVertexNormals(); }
+    g.add(new THREE.Mesh(body, [new THREE.MeshBasicMaterial({ visible: false }), steel]));   // caps hidden: the sides are flat panels below
+    // flat side panels, split at the crease: lower (vertical) and upper (leaning in) — crisp facets
+    const clip = (poly, below) => { const out = []; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ina = below ? a[1] <= BELT : a[1] >= BELT, inb = below ? b[1] <= BELT : b[1] >= BELT;
+      if (ina) out.push(a); if (ina !== inb) { const u = (BELT - a[1]) / (b[1] - a[1]); out.push([a[0] + (b[0] - a[0]) * u, BELT]); } } return out; };
+    const panel = (poly, sx, mat, off = 0) => {
+      const geo = new THREE.ShapeGeometry(new THREE.Shape(poly.map(([z, y]) => new THREE.Vector2(z, y)))), pp = geo.attributes.position;
+      for (let i = 0; i < pp.count; i++) { const z = pp.getX(i), y = pp.getY(i); pp.setXYZ(i, sx * (inset(y) + off), y, z); }
+      if (sx > 0) { const ix = geo.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } }   // face outward
+      geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); g.add(m); return m;
+    };
+    for (const sx of [-1, 1]) { panel(clip(prof, true), sx, steel); panel(clip(prof, false), sx, steel); }
+    // wheel-arch liners, black flares, sills
+    for (const a of AX) {
+      const arch = [[a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]];
+      const liner = new THREE.Shape([...arch, ...arch.slice().reverse().map(([z, y]) => [z + Math.sign(z - a) * -0.03, y - 0.03])].map(([z, y]) => new THREE.Vector2(z, y)));
+      const lg = new THREE.ExtrudeGeometry(liner, { depth: 2 * HW - 0.02, bevelEnabled: false }); lg.translate(0, 0, -HW + 0.01); lg.rotateY(-Math.PI / 2);
+      g.add(new THREE.Mesh(lg, black));
+      const outer = [[a - 0.76, 0.5], [a - 0.46, 1.12], [a + 0.46, 1.12], [a + 0.76, 0.5]];
+      for (const sx of [-1, 1]) {                                       // +x side: shape x = −z, rotated +90°; −x side: shape x = z, −90°
+        const fl = new THREE.Shape([...outer, ...arch.slice().reverse()].map(([z, y]) => new THREE.Vector2(sx > 0 ? -z : z, y)));
+        const fg = new THREE.ExtrudeGeometry(fl, { depth: 0.07, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008, bevelSegments: 1 });
+        fg.rotateY(sx > 0 ? Math.PI / 2 : -Math.PI / 2);                  // extrusion → outward
+        const f = new THREE.Mesh(fg, black); f.position.x = sx * (HW - 0.02); g.add(f);
+      }
+    }
+    const box = (w, h, d, mat, x, y, z, parent = g, r = 0.02) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), mat); m.position.set(x, y, z); parent.add(m); return m; };
+    for (const sx of [-1, 1]) box(0.1, 0.12, 2.5, black, sx * (HW + 0.02), 0.58, 0);                       // sills / steps
+    box(2.26, 0.26, 0.34, black, 0, 0.56, 2.72, g, 0.04);                                                   // front bumper
+    box(1.5, 0.08, 0.03, new THREE.MeshStandardMaterial({ color: 0x0d0e0f, roughness: 0.9 }), 0, 0.55, 2.895); // grille slot
+    box(2.26, 0.3, 0.32, black, 0, 0.58, -2.74, g, 0.04);                                                   // rear bumper
+    box(0.9, 0.06, 0.12, black, 0, 0.45, -2.86, g, 0.02);                                                   // step
+    // light bars: full-width white at the nose, red across the tail
+    box(2.02, 0.024, 0.03, barMat, 0, 1.035, HL + 0.012, g, 0.01);
+    box(2.08, 0.03, 0.03, tailMat, 0, 1.335, -HL - 0.012, g, 0.01);
+    // dark glass on the facets: windscreen, roof glass behind the apex, side windows (front + rear door)
+    const onTop = (z0, z1, m0, m1, mat) => {                            // a quad lying on the top skin between z0 and z1
+      const pts = []; for (const [z, m] of [[z0, m0], [z1, m1]]) { const y = topY(z) + 0.006, w = inset(topY(z)) - m; pts.push([-w, y, z], [w, y, z]); }
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3)); geo.setIndex([0, 1, 2, 1, 3, 2]); geo.computeVertexNormals();
+      if (geo.attributes.normal.getY(0) < 0) { geo.setIndex([0, 2, 1, 1, 2, 3]); geo.computeVertexNormals(); }
+      const msh = new THREE.Mesh(geo, mat); g.add(msh); return msh;
+    };
+    onTop(1.55, -0.04, 0.1, 0.08, dark);                                                                    // windscreen
+    onTop(-0.18, -1.12, 0.1, 0.1, dark);                                                                    // roof glass
+    const vault = (() => {                                              // black slatted vault cover
+      const c = document.createElement('canvas'); c.width = 32; c.height = 256; const x = c.getContext('2d');
+      x.fillStyle = '#1c1d1f'; x.fillRect(0, 0, 32, 256); for (let i = 0; i < 256; i += 8) { x.fillStyle = '#0e0f10'; x.fillRect(0, i, 32, 2); }
+      const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0.3 }); })();
+    { const m = onTop(-1.2, -HL + 0.04, 0.12, 0.12, vault); const uv = []; for (const v of [[0, 0], [1, 0], [0, 1], [1, 1]]) uv.push(...v); m.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); }
+    const sideWin = (poly, sx) => panel(poly, sx, dark, 0.006);
+    for (const sx of [-1, 1]) {
+      if (sx > 0) sideWin([[1.5, 1.33], [0.0, 1.33], [0.0, topY(0) - 0.07], [1.22, topY(1.22) - 0.06]], sx);   // front (passenger side)
+      sideWin([[-0.1, 1.33], [-1.15, 1.33], [-1.15, topY(-1.15) - 0.07], [-0.1, 1.83]], sx);                    // rear door
+      box(0.012, 0.66, 0.012, new THREE.MeshStandardMaterial({ color: 0x5c6064, roughness: 0.5 }), sx * (HW + 0.002), 0.93, -1.2);   // rear door seam
+      box(0.13, 0.12, 0.22, black, sx * (HW + 0.1), 1.4, 1.32, g, 0.03); box(0.12, 0.03, 0.06, black, sx * (HW + 0.03), 1.38, 1.36);   // mirror
+    }
+    // driver's door (RHD, local −x): its own steel panel + window, hinged at its front edge (z 1.28)
+    const doorPivot = new THREE.Group(); doorPivot.position.set(-HW, 0, 1.28); doorPivot.userData.dynamic = true; g.add(doorPivot);
+    { const lowerPoly = [[1.26, 0.58], [-0.08, 0.58], [-0.08, BELT], [1.26, BELT]];
+      const dp = panel(lowerPoly, -1, steel, 0.004); g.remove(dp); dp.position.set(HW, 0, -1.28); doorPivot.add(dp);
+      const dw = panel([[1.5, 1.33], [0.0, 1.33], [0.0, topY(0) - 0.07], [1.22, topY(1.22) - 0.06]], -1, dark, 0.01); g.remove(dw); dw.position.set(HW, 0, -1.28); doorPivot.add(dw);
+      const seam = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.66, 0.012), new THREE.MeshStandardMaterial({ color: 0x5c6064, roughness: 0.5 })); seam.position.set(-0.006, 0.93, -1.36); doorPivot.add(seam); }
+    // wheels: lathed 35" tyres with a dark 6-spoke rim (dynamic: they spin and steer when driven)
+    const tyreGeo = new THREE.LatheGeometry([[0.28, -0.15], [0.38, -0.16], [0.425, -0.14], [TR, -0.09], [TR, 0.09], [0.425, 0.14], [0.38, 0.16], [0.28, 0.15]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
+    const wheels = [];
+    for (const a of AX) for (const sx of [-1, 1]) {
+      const w = new THREE.Group(); w.position.set(sx * 0.9, TR, a); w.rotation.set(0, sx > 0 ? 0 : Math.PI, 0, 'YXZ'); w.userData.dynamic = true; g.add(w);
+      const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; w.add(t);
+      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.26, 24), rimMat); face.rotation.z = Math.PI / 2; w.add(face);
+      for (let k = 0; k < 6; k++) { const ang = k / 6 * Math.PI * 2, sp = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.24, 0.07), black); sp.position.set(0.135, Math.cos(ang) * 0.13, Math.sin(ang) * 0.13); sp.rotation.x = ang; w.add(sp); }
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.03, 12), black); cap.rotation.z = Math.PI / 2; cap.position.x = 0.15; w.add(cap);
+      wheels.push({ w, front: a > 0, sx, base: w.rotation.y });
+    }
+    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-0.8, 0.8].map(x => [x, 1.03, HL + 0.06]));
+    g.position.set(TRUCK_AT[0], 0, TRUCK_AT[1]); g.rotation.y = 0.12;
+    scene.add(shadowAll(g));
+    g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
+    beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
+    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
+      WB: 3.81, MAXF: 16, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.55], camDist: 8, ev: true, name: 'Cybertruck' };
   }
 
   // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
@@ -6595,6 +6729,11 @@ life = (() => {
       const pulse = Math.pow(0.5 + 0.5 * Math.sin(2 * Math.PI * f * 2 * t), 6);
       lp += 0.25 * ((Math.random() * 2 - 1) - lp);
       d[i] = 0.5 * Math.sin(2 * Math.PI * f * t) + 0.3 * Math.sin(2 * Math.PI * f * 2 * t + 1) + 0.6 * pulse * (0.6 + 0.4 * lp) + 0.15 * lp; } }),
+    // the Cybertruck (per user: no engine — an electric motor): a soft motor whine (a 180 Hz tone with two harmonics,
+    // gently wavering) over a little road hiss. Its pitch (playback rate) and volume rise with speed; ~silent at rest.
+    motor: buf(1, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR, f = 180 * (1 + 0.004 * Math.sin(2 * Math.PI * 3 * t));
+      lp += 0.06 * ((Math.random() * 2 - 1) - lp);
+      d[i] = 0.5 * Math.sin(2 * Math.PI * f * t) + 0.22 * Math.sin(2 * Math.PI * 2 * f * t + 0.5) + 0.1 * Math.sin(2 * Math.PI * 3 * f * t + 1) + 0.9 * lp; } }),
     horn: buf(0.55, (d, n) => { for (let i = 0; i < n; i++) { const t = i / SR, env = Math.min(1, t / 0.02) * Math.min(1, (0.55 - t) / 0.05);
       const sq = f => Math.tanh(4 * Math.sin(2 * Math.PI * f * t)); d[i] = env * (0.5 * sq(415) + 0.5 * sq(523)); } }),
     door: buf(0.3, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR; lp += 0.12 * ((Math.random() * 2 - 1) - lp);
@@ -6622,25 +6761,31 @@ life = (() => {
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
     snort: pos(bufs.snort, V(0, 1.2, 0.7), 6, deer.g),
     engine: pos(bufs.engine, V(0, 0.9, 1.4), 4, carRig.g), horn: pos(bufs.horn, V(0, 0.9, 2.1), 8, carRig.g), door: pos(bufs.door, V(-0.95, 1.0, 0.1), 4, carRig.g),
+    motor: pos(bufs.motor, V(0, 0.7, 0), 5, truckRig.g),
   };
   for (const k of ['horn', 'door']) snd[k].setLoop(false);
   const carSound = {
     engine(on, rate = 1) { if (!started) return; const e = snd.engine;
       if (on && !e.isPlaying) { e.setVolume(0.35); e.play(); } else if (!on && e.isPlaying) e.stop();
       if (on) { e.setPlaybackRate(rate); e.setVolume(0.25 + 0.2 * Math.min(1, rate - 0.8)); } },
+    motor(on, k = 0) { if (!started) return; const m = snd.motor;     // k: 0 … 1 of top speed
+      if (on && !m.isPlaying) m.play(); else if (!on && m.isPlaying) m.stop();
+      if (on) { m.setPlaybackRate(0.55 + 1.6 * k); m.setVolume(0.04 + 0.32 * k); } },
+    attach(g) { for (const k of ['horn', 'door']) g.add(snd[k].parent); },   // horn / door sounds come from the vehicle you're in
     horn() { if (!started || !soundOn) return; const h = snd.horn; h.setVolume(0.7); if (h.isPlaying) h.stop(); h.play(); },
     door() { if (!started || !soundOn) return; const h = snd.door; h.setVolume(0.8); if (h.isPlaying) h.stop(); h.play(); },
   };
   snd.snort.setLoop(false);
   const snort = () => { if (!started || !soundOn) return; snd.snort.setVolume(0.28); if (snd.snort.isPlaying) snd.snort.stop(); snd.snort.play(); };
-  let soundOn = true, started = false;
+  let soundOn = true, started = false, mixN = 0, mixR = 0;   // mixN / mixR: the dusk and rain blend (setMix)
   const applySound = () => {
     listener.setMasterVolume(soundOn ? 1 : 0);
     // quieter mix overall (per user: fire and birds were too noisy)
-    snd.fire.setVolume(night ? 0.3 : 0.22);
-    for (const b of snd.birds) b.setVolume(!night && !rain ? 0.16 : 0);
-    snd.crickets.setVolume(night && !rain ? 0.14 : 0);
-    snd.rain.setVolume(rain ? 0.4 : 0);
+    // the mix follows the dusk / rain blend (mixN, mixR: 0…1) so sounds fade in and out with the light
+    snd.fire.setVolume(0.22 + 0.08 * mixN);
+    for (const b of snd.birds) b.setVolume(0.16 * (1 - mixN) * (1 - mixR));
+    snd.crickets.setVolume(0.14 * mixN * (1 - mixR));
+    snd.rain.setVolume(0.4 * mixR);
   };
   const startAudio = () => {
     if (started) return;
@@ -7043,17 +7188,20 @@ life = (() => {
     shelters = [tentL, tentR, block05, unit3, solo05, flyGroup].filter(Boolean).map(g => new THREE.Box3().setFromObject(g));
   }
   // (bug sweep) night ↔ day while raining now re-dims the streaks, and fireflies stay hidden in the rain
-  const applyLook = () => { fireflies.visible = night && !rain; rainMat.opacity = night ? 0.35 : 0.6; };
-  function setNight(on) { night = on; applyLook(); applySound(); }
-  function setWeather(on) {
-    rain = on; rainLines.visible = on; for (const r of rings) r.m.visible = on;
-    applyLook(); applySound();
+  const applyLook = () => { fireflies.visible = night && !rain; };
+  function setNight(on) { night = on; applyLook(); }
+  function setWeather(on) { rain = on; applyLook(); }
+  function setMix(nk, rk) {                                     // per frame while the light / weather is changing
+    mixN = nk; mixR = rk;
+    rainLines.visible = rk > 0.01; rainMat.opacity = (0.6 - 0.25 * nk) * rk;
+    for (const r of rings) r.m.visible = rk > 0.3;
+    applySound();
   }
   function setSound(on) { soundOn = on; if (on) startAudio(); applySound(); }
   for (const r of rings) r.m.visible = false;
   let swim = 0, swimVol = 0;
   const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
-  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R, car: carRig, carSound };   // snd: debug handle (window.__perf.life.snd)
+  return { update, refreshShelters, setNight, setWeather, setMix, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R, car: carRig, truck: truckRig, carSound };   // snd: debug handle (window.__perf.life.snd)
 })();
 
 // ---------- HAMMOCK (per user: interaction). First person: walk up to the hammock and press E (or tap the prompt) to lie
@@ -7102,14 +7250,21 @@ hammock = (() => {
 // bumps off tents / props (their bounding boxes), tree trunks, the pond and the edge of the world. Chase camera trails
 // behind and can be orbited; it swings back behind the car once you're moving. =====
 car = (() => {
-  const rig = life.car, g = rig.g, snd = life.carSound, hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
+  // two vehicles (per user: the Cybertruck drives too): each rig carries its own wheelbase, top speed, collision
+  // circles, driver's-door spot, chase distance and sound (engine for the G-Class, electric motor for the Cybertruck)
+  const rigs = [life.car, life.truck], snd = life.carSound, hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
   const TOUCH = matchMedia('(pointer: coarse)').matches, V3 = THREE.Vector3;
-  const WB = 2.89, MAXF = 12.5, MAXR = 4.2, _v = new V3(), _w = new V3(), _q = new THREE.Quaternion();
-  let active = false, view = 'chase', speed = 0, steer = 0, heading = g.rotation.y, lightsOn = false, door = 0, doorWant = 0;
+  const MAXR = 4.2, _v = new V3(), _w = new V3(), _q = new THREE.Quaternion();
+  let rig = rigs[0], g = rig.g;
+  let active = false, view = 'chase', speed = 0, steer = 0, heading = g.rotation.y;
+  for (const r of rigs) { r.door = 0; r.doorWant = 0; }
   let camYaw = 0, camPitch = 0.28, dragging = false, handbrake = false, obstacles = null, pending = null, brakeGlow = 0;
-  const local = (x, y, z, out = new V3()) => out.set(x, y, z).applyMatrix4(g.matrixWorld);
-  const doorSpot = () => local(-1.55, 0, 0.1);
-  const near = () => walking && !fishing?.active && !hammock?.active && !active && doorSpot().distanceTo(_w.set(camera.position.x, 0, camera.position.z)) < 1.6;
+  const local = (x, y, z, out = new V3(), r = rig) => out.set(x, y, z).applyMatrix4(r.g.matrixWorld);
+  const doorSpot = (r = rig) => local(...r.doorLocal, new V3(), r);
+  const nearRig = () => { if (!walking || fishing?.active || hammock?.active || acts?.active || active) return null;
+    _w.set(camera.position.x, 0, camera.position.z); let best = null, bd = 1.6;
+    for (const r of rigs) { const d = doorSpot(r).distanceTo(_w); if (d < bd) { bd = d; best = r; } } return best; };
+  const near = () => !!nearRig();
   const say = html => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'car'; };
   const hush = () => { if (hud.dataset.owner === 'car') { hud.style.display = 'none'; hud.dataset.owner = ''; } };
   const IN = () => (TOUCH ? '' : '<kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Space</kbd> brake · <kbd>V</kbd> view · <kbd>E</kbd> get out · ')
@@ -7118,18 +7273,21 @@ car = (() => {
     obstacles = { boxes: [], trees: [] };
     const b = new THREE.Box3();
     for (const o of scene.children) {
-      if (o === g || o.isLight || o.isInstancedMesh || !o.visible || o.userData.dynamic) continue;
+      if (rigs.some(r => r.g === o) || o.isLight || o.isInstancedMesh || !o.visible || o.userData.dynamic) continue;   // vehicles are checked live
       b.setFromObject(o); if (b.isEmpty()) continue;
       const sx = b.max.x - b.min.x, sz = b.max.z - b.min.z, h = b.max.y - Math.max(0, b.min.y);
       if (sx > 20 || sz > 20 || h < 0.3 || b.min.y > 1.8) continue;     // ground, grass, rugs, the pond surface, things overhead
       obstacles.boxes.push([b.min.x, b.max.x, b.min.z, b.max.z]);
     }
-    for (const [x, z, r] of treeSpots) if (r < 3 && Math.hypot(x - SUV_AT[0], z - SUV_AT[1]) > 0.5 && Math.hypot(x - DEER_AT[0], z - DEER_AT[1]) > 0.5) obstacles.trees.push([x, z]);
+    for (const [x, z, r] of treeSpots) if (r < 3 && [SUV_AT, TRUCK_AT, DEER_AT].every(([ax, az]) => Math.hypot(x - ax, z - az) > 0.5)) obstacles.trees.push([x, z]);
   }
-  function blocked(px, pz, hd) {                    // three circles along the car (r 1.0) vs boxes, trunks, pond, world edge
-    const sn = Math.sin(hd), cs = Math.cos(hd);
-    for (const off of [-1.45, 0, 1.45]) {
-      const cx = px + sn * off, cz = pz + cs * off, R = 1.0;
+  const circlesOf = (r, px, pz, hd) => r.circles.map(off => [px + Math.sin(hd) * off, pz + Math.cos(hd) * off]);
+  function blocked(px, pz, hd) {                    // circles along the vehicle vs boxes, trunks, the other vehicle, pond, edge
+    const sn = Math.sin(hd), cs = Math.cos(hd), R = rig.R;
+    const others = rigs.filter(r => r !== rig).flatMap(r => circlesOf(r, r.g.position.x, r.g.position.z, r.g.rotation.y).map(c => [...c, r.R]));
+    for (const off of rig.circles) {
+      const cx = px + sn * off, cz = pz + cs * off;
+      for (const [ox, oz, orr] of others) if (Math.hypot(cx - ox, cz - oz) < R + orr - 0.15) return true;
       if (Math.hypot(cx, cz) > WORLD_R - 4) return true;
       if (pond.depthAt(cx, cz) || pond.depthAt(cx + cs * 0.9, cz - sn * 0.9) || pond.depthAt(cx - cs * 0.9, cz + sn * 0.9)) return true;
       for (const [x, z] of obstacles.trees) if (Math.hypot(cx - x, cz - z) < R + 0.4) return true;
@@ -7137,24 +7295,25 @@ car = (() => {
     }
     return false;
   }
-  function setLights(on) {
-    lightsOn = on; for (const b of rig.beams) { b.visible = on; b.intensity = on ? 70 : 0; }
-    rig.lensMat.emissiveIntensity = on ? 2.2 : 0; rig.beamGroup.visible = on;
+  function setLights(on, r = rig) {                 // per vehicle: a parked one keeps its lights on
+    r.lightsOn = on; for (const b of r.beams) { b.visible = on; b.intensity = on ? 70 : 0; }
+    r.lensMat.emissiveIntensity = on ? 2.2 : 0; r.beamGroup.visible = on;
   }
-  function start() {
-    if (active) return;
+  function start(r = nearRig()) {
+    if (active || !r) return;
+    rig = r; g = r.g; snd.attach(g);
     if (!obstacles) buildObstacles();
     active = true; releaseKeys(); if (fpControls.isLocked) fpControls.unlock();
     walkHint.style.display = 'none'; document.getElementById('osRun').style.visibility = 'hidden';
     exitBtn.textContent = '✕ Get out'; exitBtn.style.display = 'block';
-    doorWant = 1; snd.door(); pending = 'in';            // door swings open, then you're in and it shuts
+    rig.doorWant = 1; snd.door(); pending = 'in';        // door swings open, then you're in and it shuts
     heading = g.rotation.y; camYaw = 0; view = 'chase';
     say(IN());
   }
   function stop() {
     if (!active) return;
     if (Math.abs(speed) > 1.2) { toast('Slow down to get out'); return; }
-    speed = 0; doorWant = 1; snd.door(); pending = 'out'; snd.engine(false);
+    speed = 0; rig.doorWant = 1; snd.door(); pending = 'out'; snd.engine(false); snd.motor(false);
   }
   function finishOut() {
     active = false; hush(); exitBtn.style.display = 'none'; exitBtn.textContent = '✕ Stand up';
@@ -7165,9 +7324,9 @@ car = (() => {
   }
   function act(a) {
     if (!active) return;
-    if (a === 'lights') setLights(!lightsOn);
+    if (a === 'lights') setLights(!rig.lightsOn);
     else if (a === 'horn') snd.horn();
-    else if (a === 'view') { view = view === 'chase' ? 'seat' : 'chase'; camYaw = 0; camPitch = view === 'chase' ? 0.28 : 0; }
+    else if (a === 'view') { if (!rig.seatEye) { toast('Chase view only in the ' + rig.name); return; } view = view === 'chase' ? 'seat' : 'chase'; camYaw = 0; camPitch = view === 'chase' ? 0.28 : 0; }
   }
   function onE() { if (active) { stop(); return true; } if (near()) { start(); return true; } return false; }
   function look(dx, dy) { dragging = true; camYaw -= dx * 0.006; camPitch = Math.max(view === 'chase' ? 0.05 : -0.6, Math.min(view === 'chase' ? 0.9 : 0.6, camPitch + dy * 0.004)); }
@@ -7178,21 +7337,21 @@ car = (() => {
   addEventListener('keyup', e => { if (e.code === 'Space') handbrake = false; });
   const _cam = new V3(), _tgt = new V3();
   function update(dt) {
-    if (lightsOn) {                                   // beam / flare strength: strong at night, more in rain, faint by day
-      const want = (isNight ? 0.3 : 0.05) * (raining ? 1.5 : 1);
-      rig.beamMat.uniforms.uI.value += (want - rig.beamMat.uniforms.uI.value) * Math.min(1, dt * 3);
-      rig.flareMat.opacity = isNight ? 0.85 : 0.3;
+    for (const r of rigs) if (r.lightsOn) {          // beam / flare strength: strong at night, more in rain, faint by day
+      const want = lerp(0.05, 0.3, nightK) * (1 + 0.5 * rainK);
+      r.beamMat.uniforms.uI.value += (want - r.beamMat.uniforms.uI.value) * Math.min(1, dt * 3);
+      r.flareMat.opacity = lerp(0.3, 0.85, nightK);
     }
-    // door: swing open / shut (0 … 1.05 rad); getting in / out happens with the door open
-    door += (doorWant - door) * Math.min(1, dt * 5);
-    rig.doorPivot.rotation.y = 1.05 * door;
-    if (pending && door > 0.9) {
-      if (pending === 'in') { doorWant = 0; snd.engine(true, 0.85); }
-      else { doorWant = 0; finishOut(); }
+    // doors: swing open / shut (0 … 1.05 rad); getting in / out happens with the door open
+    for (const r of rigs) { r.door += (r.doorWant - r.door) * Math.min(1, dt * 5); r.doorPivot.rotation.y = 1.05 * r.door; }
+    if (pending && rig.door > 0.9) {
+      if (pending === 'in') { rig.doorWant = 0; if (rig.ev) snd.motor(true, 0); else snd.engine(true, 0.85); }
+      else { rig.doorWant = 0; finishOut(); }
       pending = null; setTimeout(() => snd.door(), 250);
     }
     if (!active) {
-      if (near()) say(TOUCH ? '<b>Tap</b> to get in' : '<kbd>E</kbd> get in and drive'); else hush();
+      const nr = nearRig();
+      if (nr) say(TOUCH ? '<b>Tap</b> to get in the ' + nr.name : `<kbd>E</kbd> get in the ${nr.name} and drive`); else hush();
       return;
     }
     if (pending) return;                              // getting in / out
@@ -7204,21 +7363,22 @@ car = (() => {
     else if (throttle > 0.05) acc = speed < -0.2 ? 9 * throttle : 4.2 * throttle;              // brake if rolling back, else drive
     else if (throttle < -0.05) acc = speed > 0.2 ? 9 * throttle : 2.6 * throttle;              // brake, then reverse
     else acc = -Math.sign(speed) * Math.min(Math.abs(speed) / dt, 1.2 + 0.04 * speed * speed); // coast: rolling resistance + drag
-    speed = Math.max(-MAXR, Math.min(MAXF, speed + acc * dt));
+    speed = Math.max(-MAXR, Math.min(rig.MAXF, speed + acc * dt));
     brakeGlow += (((throttle < -0.05 && speed > 0.2) || (throttle > 0.05 && speed < -0.2) || handbrake ? 1 : 0) - brakeGlow) * Math.min(1, dt * 12);
     // steering: eased, less lock at speed
     const lock = 0.55 / (1 + Math.abs(speed) * 0.07);
     steer += (steerIn * lock - steer) * Math.min(1, dt * 5);
     // move (bicycle model), revert on collision with a small bounce
     const px = g.position.x, pz = g.position.z, ph = heading;
-    heading += speed / WB * Math.tan(steer) * dt;
+    heading += speed / rig.WB * Math.tan(steer) * dt;
     g.position.x += Math.sin(heading) * speed * dt; g.position.z += Math.cos(heading) * speed * dt;
     if (blocked(g.position.x, g.position.z, heading)) { g.position.x = px; g.position.z = pz; heading = ph; if (Math.abs(speed) > 2) snd.door(); speed *= -0.25; }
     g.rotation.set(-0.012 * Math.max(-3, Math.min(3, acc)) / 3, heading, 0, 'YXZ');   // nose dips braking, lifts accelerating
     // wheels spin and the fronts steer
     for (const w of rig.wheels) { w.w.rotation.x += (w.sx > 0 ? 1 : -1) * speed / rig.TR * dt; w.w.rotation.y = w.base + (w.front ? steer : 0); }
-    rig.tailMat.emissiveIntensity = (lightsOn ? 0.8 : 0) + 2.5 * brakeGlow;
-    snd.engine(true, 0.85 + Math.abs(speed) / MAXF * 1.0 + Math.abs(throttle) * 0.12);
+    rig.tailMat.emissiveIntensity = (rig.lightsOn ? 0.8 : 0) + 2.5 * brakeGlow;
+    if (rig.ev) snd.motor(true, Math.min(1, Math.abs(speed) / rig.MAXF + Math.abs(throttle) * 0.05));
+    else snd.engine(true, 0.85 + Math.abs(speed) / rig.MAXF * 1.0 + Math.abs(throttle) * 0.12);
     // camera
     g.updateMatrixWorld();
     if (view === 'seat') {
@@ -7226,7 +7386,7 @@ car = (() => {
       camera.rotation.set(-camPitch * 0.6, heading + Math.PI + camYaw, 0, 'YXZ');
     } else {
       if (!dragging && Math.abs(speed) > 1.5) camYaw *= Math.exp(-dt * 1.6);                 // swing back behind
-      const yaw = heading + camYaw, dist = 6.4;
+      const yaw = heading + camYaw, dist = rig.camDist;
       _cam.set(g.position.x - Math.sin(yaw) * dist * Math.cos(camPitch), 1.0 + dist * Math.sin(camPitch) + 0.6, g.position.z - Math.cos(yaw) * dist * Math.cos(camPitch));
       _cam.y = Math.max(0.6, _cam.y);
       camera.position.lerp(_cam, 1 - Math.exp(-dt * 6));
@@ -7234,7 +7394,7 @@ car = (() => {
       camera.lookAt(_tgt);
     }
   }
-  return { update, onE, act, look, start, stop, get active() { return active; }, get speed() { return speed; } };
+  return { update, onE, act, look, start, stop, get active() { return active; }, get speed() { return speed; }, get rig() { return rig; } };
 })();
 
 // ---------- CAMP ACTIVITIES (per user: picked from a list — 1 roast marshmallows, 2 add firewood, 7 skip stones,
@@ -7940,7 +8100,7 @@ renderer.setAnimationLoop(() => {
   if (under !== wasUnder) {
     wasUnder = under;
     const fb = fogBase();
-    scene.fog.color.set(under ? (isNight ? 0x08262c : 0x2f747b) : fb.c);
+    if (under) scene.fog.color.set(isNight ? 0x08262c : 0x2f747b); else scene.fog.color.copy(fb.c);
     scene.fog.near = under ? 0.3 : fb.n; scene.fog.far = under ? 9 : fb.f;
     pond.setUnder(under);
   }
@@ -7952,7 +8112,8 @@ renderer.setAnimationLoop(() => {
   }
   const t = performance.now() * 0.001;
   campfire.update(t, dt, isNight);            // flames, embers, sparks, smoke
-  fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15) * (1 + 0.4 * campfire.boost);
+  fireLight.intensity = lerp(1.2, 2.6, nightK) * (0.85 + Math.sin(t * 17) * 0.15) * (1 + 0.4 * campfire.boost);
+  blendLook(dt);                              // dusk / dawn and rain fading in and out
   pond.update(t, dt);                         // koi swim, ripples drift
   treeWind.value = t;                         // foliage sway
   life?.setSwim(swimMove);                    // water swish only while moving in the pond
