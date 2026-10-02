@@ -77,6 +77,7 @@
     background: rgba(20,22,26,.85); color: #fff; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; }
   #toast.show { opacity: 1; transform: translateX(-50%); }
   .btn-row { display: flex; gap: 8px; margin-top: 8px; }
+  #walkBtn { margin: 2px 0 10px; }
   .btn-row .btn { flex: 1; background: #eef1f5; color: var(--text); font-weight: 600; }
 
   /* ---------- settings panel (refined light card) ---------- */
@@ -260,6 +261,7 @@
     <h1>Spark Air Tent Camping 3D Tour<small>Block 10, 09 &amp; 05 air tents around the campfire</small></h1>
     <button id="closePanel" class="icon-btn" title="Close panel">×</button>
   </header>
+  <button id="walkBtn" class="btn">🚶 First person mode</button>   <!-- top of the panel (per user) -->
 
   <details><summary>Layout</summary>
     <div class="field"><span>Gap between tents</span><span class="chip" id="gapVal">3.40 m</span></div>
@@ -279,7 +281,6 @@
   </details>
 
   <details open><summary>Controls</summary>
-    <button id="walkBtn" class="btn">🚶 First person mode</button>
     <div class="btn-row"><button id="shareBtn" class="btn">🔗 Copy view link</button><button id="photoBtn" class="btn">📷 Save photo</button></div>
     <label class="toggle"><span>On-screen controls</span><kbd>B</kbd><input type="checkbox" id="osControlsChk" checked /></label>
     <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move the view · <kbd>Shift</kbd> slow · drag to orbit, scroll to zoom</div>
@@ -852,7 +853,8 @@ const POND = { x: -16.5, z: 5.0, R: 4.0, sx: 1.2, waterY: -0.07, depth: 1.8, // 
                                                     // tree's canopy is ≥ 2.2 m away and none is in front
 // fixed spots for the camp-life props (per user), kept clear of the random trees
 const HAMMOCK = { a: [-12.5, -6.0], b: [-12.5, -2.2] };   // the two broadleaf trees the hammock hangs between
-const SUV_AT = [13.8, -2.5], TRUCK_AT = [14.4, -9.6], DEER_AT = [-15.5, -11.0];
+// the Cybertruck parks beside the G-Class (per user: parallel, not blocking it): 3.6 m to its +x side, same heading
+const SUV_AT = [13.8, -2.5], TRUCK_AT = [13.8 + 3.6 * Math.cos(0.12), -2.5 - 3.6 * Math.sin(0.12)], DEER_AT = [-15.5, -11.0];
 const pondR = a => POND.R * (1 + 0.11 * Math.sin(2 * a + 1.0) + 0.07 * Math.sin(3 * a + 2.2) + 0.04 * Math.sin(5 * a + 0.4));
 const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
   const a = i / n * Math.PI * 2, r = pondR(a) * k;
@@ -867,7 +869,7 @@ const TRACK = (() => {
   const loop = new THREE.CatmullRomCurve3(Array.from({ length: 14 }, (_, i) => { const a = i / 14 * Math.PI * 2, w = 1 + 0.08 * Math.sin(3 * a + 0.7) + 0.05 * Math.sin(5 * a + 2);
     return P(Math.cos(a) * 62 * w, 4 + Math.sin(a) * 54 * w); }), true, 'centripetal');
   const j = loop.getPoint(0);
-  const spur = new THREE.CatmullRomCurve3([P(15.6, -1.0), P(26, 0.8), P(40, -1.2), P(54, 2.2), P(j.x, j.z)], false, 'centripetal');
+  const spur = new THREE.CatmullRomCurve3([P(15.4, 2.4), P(26, 3.0), P(40, 0.6), P(54, 2.4), P(j.x, j.z)], false, 'centripetal');   // starts just ahead of both parked vehicles
   const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90)];
   const HALF = 3;                                     // 6 m wide
   const near = (x, z, d) => { for (const ps of pts) for (let i = 1; i < ps.length; i++) { const a = ps[i - 1], b = ps[i], ex = b.x - a.x, ez = b.z - a.z;
@@ -6315,7 +6317,7 @@ life = (() => {
       WB: 2.89, MAXF: 12.5, R: 1.0, circles: [-1.45, 0, 1.45], doorLocal: [-1.55, 0, 0.1], camDist: 6.4, ev: false, name: 'G-Class' };
   }
   // ===== Tesla Cybertruck (per user, from two photos): 568.3 cm long, 220.1 cm wide (241.3 with mirrors), ~185 cm
-  //       tall, wheelbase 3.81 m, 35" tyres. Parked behind the G-Class and drivable the same way (E at the driver's
+  //       tall, wheelbase 3.81 m, 35" tyres. Parked beside the G-Class and drivable the same way (E at the driver's
   //       door, RHD). Brushed stainless, faceted: the side profile is one straight line from the low nose up the hood
   //       and windscreen to the apex over the cabin, then a long straight slope over the vault (bed) to the tail. The
   //       body is an extruded profile whose upper part tilts inward above the 1.27 m crease; flat side panels below /
@@ -6329,31 +6331,45 @@ life = (() => {
     const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x0f1316, roughness: 0.08, metalness: 0.6 });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, roughness: 0.45, metalness: 0.5 });
-    const barMat = new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 0.2, emissive: 0xffffff, emissiveIntensity: 0 });
+    const barMat = new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 0.2, emissive: 0xffffff, emissiveIntensity: 0.9 });   // the white bar IS the headlight (DRL)
     const tailMat = new THREE.MeshStandardMaterial({ color: 0x7a1010, roughness: 0.3, emissive: 0xff1a0a, emissiveIntensity: 0 });
     const HL = 2.84, HW = 1.1, BELT = 1.27, TR = 0.44, AX = [1.905, -1.905], LEAN = 0.38;
-    const inset = y => y > BELT ? HW - LEAN * (y - BELT) : HW;           // half-width at height y (upper facets lean in)
+    // The body is ONE closed loft of cross-sections along z (per user: the first build had gaps, and a boxy bonnet).
+    // Each ring: vertical lower sides up to the crease, upper facets leaning in to the top. The crease is 1.27 m along
+    // the cabin and drops to the light bar (1.04 m) at the nose, so the bonnet gets the chamfered edges of the real
+    // truck — flat top narrowing toward the windscreen, angled side faces. Shared ring vertices = no gaps; flat
+    // shading keeps the facets crisp.
+    const crease = z => z >= 1.2 ? 1.04 + (HL - z) * ((BELT - 1.04) / (HL - 1.2)) : BELT;
+    const inset = (y, z) => y > crease(z) ? HW - LEAN * (y - crease(z)) : HW;   // half-width at height y (upper facets lean in)
     const topY = z => z >= -0.1 ? 1.04 + (HL - z) * (0.86 / (HL + 0.1)) : 1.9 - (-0.1 - z) * (0.54 / (HL - 0.1));   // nose → apex → tail
-    // side profile (z, y): bottom with angular arches → nose → apex → tail
+    // bottom line (z, y): angular wheel arches, the nose and tail undercuts
     const prof = [[-HL, 0.62], [-2.66, 0.56]];
     for (const a of [AX[1], AX[0]]) prof.push([a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]);
-    prof.push([2.7, 0.58], [HL, 0.72], [HL, 1.04], [-0.1, 1.9], [-HL, 1.36]);
-    const shape = new THREE.Shape(prof.map(([z, y]) => new THREE.Vector2(z, y)));
-    const body = new THREE.ExtrudeGeometry(shape, { depth: 2 * HW, bevelEnabled: false });
-    body.translate(0, 0, -HW); body.rotateY(-Math.PI / 2);                // shape x → world z, extrusion across x
-    { const pp = body.attributes.position; for (let i = 0; i < pp.count; i++) { const y = pp.getY(i); pp.setX(i, pp.getX(i) * inset(y) / HW); } body.computeVertexNormals(); }
-    g.add(new THREE.Mesh(body, [new THREE.MeshBasicMaterial({ visible: false }), steel]));   // caps hidden: the sides are flat panels below
-    // flat side panels, split at the crease: lower (vertical) and upper (leaning in) — crisp facets
-    const clip = (poly, below) => { const out = []; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length];
-      const ina = below ? a[1] <= BELT : a[1] >= BELT, inb = below ? b[1] <= BELT : b[1] >= BELT;
-      if (ina) out.push(a); if (ina !== inb) { const u = (BELT - a[1]) / (b[1] - a[1]); out.push([a[0] + (b[0] - a[0]) * u, BELT]); } } return out; };
+    prof.push([2.7, 0.58], [HL, 0.72]);
+    const bottomY = z => { for (let i = 1; i < prof.length; i++) { const [z0, y0] = prof[i - 1], [z1, y1] = prof[i]; if (z <= z1 + 1e-9) return y0 + (y1 - y0) * (z - z0) / ((z1 - z0) || 1); } return 0.72; };
+    const zs = [...new Set([...prof.map(p => p[0]), -0.1, 1.2, ...Array.from({ length: 24 }, (_, i) => -HL + (i + 0.5) * (2 * HL) / 24)].map(z => +z.toFixed(4)))].sort((p, q) => p - q);
+    const ring = z => { const t = topY(z), c = Math.min(crease(z), t), b = bottomY(z), wt = HW - LEAN * (t - c);
+      return [[-HW, b, z], [-HW, c, z], [-wt, t, z], [wt, t, z], [HW, c, z], [HW, b, z]]; };
+    const pos = [], tri = (A, B, C) => pos.push(...A, ...B, ...C);
+    for (let i = 1; i < zs.length; i++) { const r0 = ring(zs[i - 1]), r1 = ring(zs[i]);
+      for (let k = 0; k < 6; k++) { const k2 = (k + 1) % 6; tri(r0[k], r0[k2], r1[k2]); tri(r0[k], r1[k2], r1[k]); } }
+    { const body = new THREE.BufferGeometry(); body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); body.computeVertexNormals();
+      const nx = body.attributes.normal.getX(0), px = body.attributes.position.getX(0);           // side faces must point out
+      if (nx * px < 0) { const pa = body.attributes.position.array; for (let i = 0; i < pa.length; i += 9) for (let k = 0; k < 3; k++) { const t = pa[i + 3 + k]; pa[i + 3 + k] = pa[i + 6 + k]; pa[i + 6 + k] = t; } body.computeVertexNormals(); }
+      g.add(new THREE.Mesh(body, steel)); }
+    { const cp = [], A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3();    // nose and tail faces, each turned to face out
+      for (const [z, dir] of [[zs[0], -1], [zs.at(-1), 1]]) { const r = ring(z);
+        for (let k = 1; k < 5; k++) { A.set(...r[0]); B.set(...r[k]); C.set(...r[k + 1]);
+          const nz = B.clone().sub(A).cross(C.clone().sub(A)).z; cp.push(...(nz * dir > 0 ? [r[0], r[k], r[k + 1]] : [r[0], r[k + 1], r[k]]).flat()); } }
+      const caps = new THREE.BufferGeometry(); caps.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3)); caps.computeVertexNormals();
+      g.add(new THREE.Mesh(caps, steel)); }
+    // overlay panels on the side surface (windows, the driver's door): drawn in (z, y), placed on the facet they sit on
     const panel = (poly, sx, mat, off = 0) => {
       const geo = new THREE.ShapeGeometry(new THREE.Shape(poly.map(([z, y]) => new THREE.Vector2(z, y)))), pp = geo.attributes.position;
-      for (let i = 0; i < pp.count; i++) { const z = pp.getX(i), y = pp.getY(i); pp.setXYZ(i, sx * (inset(y) + off), y, z); }
+      for (let i = 0; i < pp.count; i++) { const z = pp.getX(i), y = pp.getY(i); pp.setXYZ(i, sx * (inset(y, z) + off), y, z); }
       if (sx > 0) { const ix = geo.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } }   // face outward
       geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); g.add(m); return m;
     };
-    for (const sx of [-1, 1]) { panel(clip(prof, true), sx, steel); panel(clip(prof, false), sx, steel); }
     // wheel-arch liners, black flares, sills
     for (const a of AX) {
       const arch = [[a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]];
@@ -6370,8 +6386,9 @@ life = (() => {
     }
     const box = (w, h, d, mat, x, y, z, parent = g, r = 0.02) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), mat); m.position.set(x, y, z); parent.add(m); return m; };
     for (const sx of [-1, 1]) box(0.1, 0.12, 2.5, black, sx * (HW + 0.02), 0.58, 0);                       // sills / steps
-    box(2.26, 0.26, 0.34, black, 0, 0.56, 2.72, g, 0.04);                                                   // front bumper
-    box(1.5, 0.08, 0.03, new THREE.MeshStandardMaterial({ color: 0x0d0e0f, roughness: 0.9 }), 0, 0.55, 2.895); // grille slot
+    box(2.26, 0.32, 0.34, black, 0, 0.56, 2.72, g, 0.04);                                                   // front bumper
+    box(1.3, 0.1, 0.03, new THREE.MeshStandardMaterial({ color: 0x0b0c0d, roughness: 0.9 }), 0, 0.56, 2.895); // grille band
+    for (const sx of [-1, 1]) box(0.34, 0.018, 0.02, barMat, sx * 0.72, 0.745, HL + 0.006, g, 0.006);       // lower lamp slits
     box(2.26, 0.3, 0.32, black, 0, 0.58, -2.74, g, 0.04);                                                   // rear bumper
     box(0.9, 0.06, 0.12, black, 0, 0.45, -2.86, g, 0.02);                                                   // step
     // light bars: full-width white at the nose, red across the tail
@@ -6379,7 +6396,7 @@ life = (() => {
     box(2.08, 0.03, 0.03, tailMat, 0, 1.335, -HL - 0.012, g, 0.01);
     // dark glass on the facets: windscreen, roof glass behind the apex, side windows (front + rear door)
     const onTop = (z0, z1, m0, m1, mat) => {                            // a quad lying on the top skin between z0 and z1
-      const pts = []; for (const [z, m] of [[z0, m0], [z1, m1]]) { const y = topY(z) + 0.006, w = inset(topY(z)) - m; pts.push([-w, y, z], [w, y, z]); }
+      const pts = []; for (const [z, m] of [[z0, m0], [z1, m1]]) { const y = topY(z) + 0.006, w = inset(topY(z), z) - m; pts.push([-w, y, z], [w, y, z]); }
       const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3)); geo.setIndex([0, 1, 2, 1, 3, 2]); geo.computeVertexNormals();
       if (geo.attributes.normal.getY(0) < 0) { geo.setIndex([0, 2, 1, 1, 2, 3]); geo.computeVertexNormals(); }
       const msh = new THREE.Mesh(geo, mat); g.add(msh); return msh;
