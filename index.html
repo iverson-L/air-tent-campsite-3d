@@ -5596,24 +5596,6 @@ function addEntranceRug(tent, palette) {
   tent.add(rug);
 }
 
-// ---------- string-light poles round the fire: two wooden posts, each with a guy line + peg ----------
-function buildLightPole(x, z, away) {
-  const g = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x7a5a3c, roughness: 0.85 });
-  const HP = 2.55;
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, HP, 10), wood);
-  post.position.y = HP / 2; g.add(post);
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.004, 6, 12), gearMats.black);
-  hook.position.y = HP - 0.03; g.add(hook);
-  const guyEnd = new THREE.Vector3(Math.cos(away) * 1.1, 0.02, Math.sin(away) * 1.1);   // guy line away from the fire
-  g.add(bar(new THREE.Vector3(0, HP - 0.05, 0), guyEnd, 0.004, 0.004, gearMats.rope));
-  const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.004, 0.12, 6), gearMats.black);
-  peg.position.copy(guyEnd); peg.position.y = 0.04; peg.rotation.z = 0.3; g.add(peg);
-  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  g.position.set(x, 0, z);
-  scene.add(g);
-  return new THREE.Vector3(x, HP - 0.03, z);
-}
-
 // ---------- fishing spot (per user): folding stool, rod on a forked rest and a bucket on the pond's east bank.
 // In first person, walk up to the stool and press E to sit down and cast; wait for the bobber to dip, press E on the
 // bite to reel a koi in (then it's released). WASD / Esc stands you up. Tapping the hint pill = E on touch screens. ----------
@@ -5864,16 +5846,10 @@ function makeString(p1, p2, sag) {
     }
   }
 }
-makeString(new THREE.Vector3(0, 2.95, 3), new THREE.Vector3(0, 2.95, -3), 0.7);     // pole → pole over the gap
+// per user: only the tree → flysheet-pole strings (the two wooden festoon posts by the fire, their strings and the
+// pole → pole string over the gap were removed)
 makeString(new THREE.Vector3(0, 2.95, 3), new THREE.Vector3(-9.5, 4.0, 6.5), 0.8);   // front pole → tree A
 makeString(new THREE.Vector3(0, 2.95, -3), new THREE.Vector3(9.5, 4.0, -6.5), 0.8);  // back pole → tree B
-// festoon round the fire: front flysheet pole → two wooden posts either side of the fire, and post → post
-{
-  const away = (x, z) => Math.atan2(z - 4.05, x);                    // guy lines lean away from the fire
-  const pL = buildLightPole(-3.6, 5.6, away(-3.6, 5.6)), pR = buildLightPole(3.6, 5.6, away(3.6, 5.6));
-  const front = new THREE.Vector3(0, 2.95, 3);
-  makeString(front, pL, 0.45); makeString(front, pR, 0.45); makeString(pL, pR, 0.55);
-}
 const stringLight = new THREE.PointLight(0xffc46b, 0, 10, 2);
 stringLight.position.set(0, 2.3, 0);
 scene.add(stringLight);
@@ -6254,10 +6230,35 @@ life = (() => {
       const l = new THREE.SpotLight(0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(sx * 0.68, 0.98, ZF + 0.1);
       l.target.position.set(sx * 0.9, 0, ZF + 14); g.add(l, l.target); l.visible = false; return l;
     });
+    // visible beams (per user: "headlights beam visible at night"): a soft additive cone from each lamp, bright at the
+    // lens and fading out over 9 m, faint at its silhouette edges so it reads as light in the air, plus a glow flare
+    // on each lens. Shown with the headlights; strength follows night / rain (car.update sets uI).
+    const beamGroup = new THREE.Group(); beamGroup.userData.dynamic = true; beamGroup.visible = false; g.add(beamGroup);
+    const BL = 9, coneGeo = new THREE.ConeGeometry(1.9, BL, 28, 8, true);
+    coneGeo.translate(0, -BL / 2, 0);                                     // apex at the lamp
+    { const pp = coneGeo.attributes.position, tA = new Float32Array(pp.count); for (let i = 0; i < pp.count; i++) tA[i] = -pp.getY(i) / BL;
+      coneGeo.setAttribute('aT', new THREE.BufferAttribute(tA, 1)); }
+    coneGeo.rotateX(-Math.PI / 2 - 0.06);                                 // pointing ahead (+z), dipped a little
+    const beamMat = new THREE.ShaderMaterial({
+      uniforms: { uI: { value: 0 }, uC: { value: new THREE.Color(0xfff1d6) } },
+      vertexShader: `attribute float aT; varying float vT; varying vec3 vN; varying vec3 vV;
+        void main() { vT = aT; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: `uniform float uI; uniform vec3 uC; varying float vT; varying vec3 vN; varying vec3 vV;
+        void main() { float facing = pow(abs(dot(normalize(vN), normalize(vV))), 1.4);
+          float a = uI * pow(1.0 - vT, 1.7) * smoothstep(0.0, 0.04, vT) * (0.15 + 0.85 * facing);
+          gl_FragColor = vec4(uC, a); }`,                  // additive blending multiplies by alpha itself
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    const flareMat = new THREE.SpriteMaterial({ map: makeSunTexture(128), color: 0xfff4e0, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    for (const sx of [-1, 1]) {
+      const cone = new THREE.Mesh(coneGeo, beamMat); cone.position.set(sx * 0.68, 0.98, ZF + 0.06); cone.renderOrder = 5; cone.frustumCulled = false; beamGroup.add(cone);
+      const fl = new THREE.Sprite(flareMat); fl.scale.setScalar(0.9); fl.position.set(sx * 0.68, 0.98, ZF + 0.08); beamGroup.add(fl);
+    }
     g.position.set(SUV_AT[0], 0, SUV_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
-    carRig = { g, doorPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3) };
+    beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
+    carRig = { g, doorPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat };
   }
 
   // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
@@ -7101,7 +7102,7 @@ car = (() => {
   }
   function setLights(on) {
     lightsOn = on; for (const b of rig.beams) { b.visible = on; b.intensity = on ? 70 : 0; }
-    rig.lensMat.emissiveIntensity = on ? 2.2 : 0;
+    rig.lensMat.emissiveIntensity = on ? 2.2 : 0; rig.beamGroup.visible = on;
   }
   function start() {
     if (active) return;
@@ -7140,6 +7141,11 @@ car = (() => {
   addEventListener('keyup', e => { if (e.code === 'Space') handbrake = false; });
   const _cam = new V3(), _tgt = new V3();
   function update(dt) {
+    if (lightsOn) {                                   // beam / flare strength: strong at night, more in rain, faint by day
+      const want = (isNight ? 0.3 : 0.05) * (raining ? 1.5 : 1);
+      rig.beamMat.uniforms.uI.value += (want - rig.beamMat.uniforms.uI.value) * Math.min(1, dt * 3);
+      rig.flareMat.opacity = isNight ? 0.85 : 0.3;
+    }
     // door: swing open / shut (0 … 1.05 rad); getting in / out happens with the door open
     door += (doorWant - door) * Math.min(1, dt * 5);
     rig.doorPivot.rotation.y = 1.05 * door;
