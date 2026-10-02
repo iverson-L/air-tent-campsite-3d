@@ -878,11 +878,19 @@ const TRACK = (() => {
     return P(Math.cos(a) * 62 * w, 4 + Math.sin(a) * 54 * w); }), true, 'centripetal');
   const j = loop.getPoint(0);
   const spur = new THREE.CatmullRomCurve3([P(15.4, 2.4), P(26, 3.0), P(40, 0.6), P(54, 2.4), P(j.x, j.z)], false, 'centripetal');   // starts just ahead of both parked vehicles
-  const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90)];
+  // the T junction (per user: add a radius): two fillet curves from the spur, ~10 m before the loop, sweeping into the
+  // loop each way (quadratic Béziers through the junction point, so they leave the spur and meet the loop tangentially)
+  const R = 10, S = spur.getPointAt(1 - R / spur.getLength()), dl = R / loop.getLength();
+  const fillets = [dl, 1 - dl].map(t => new THREE.QuadraticBezierCurve3(S, j, loop.getPointAt(t)).getSpacedPoints(30));
+  const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90), ...fillets];
+  // what's drawn: the spur stops where the fillets start; a short stub fills the middle of the junction, drawn under the
+  // loop so the loop's ruts stay on top (drawn to the loop's centre it ran its ruts across the loop)
+  const sEnd = 1 - R / spur.getLength();
+  const draw = { spur: Array.from({ length: 81 }, (_, i) => spur.getPointAt(sEnd * i / 80)), stub: Array.from({ length: 8 }, (_, i) => S.clone().lerp(j, i / 7)) };
   const HALF = 3;                                     // 6 m wide
   const near = (x, z, d) => { for (const ps of pts) for (let i = 1; i < ps.length; i++) { const a = ps[i - 1], b = ps[i], ex = b.x - a.x, ez = b.z - a.z;
     const u = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / (ex * ex + ez * ez))); if (Math.hypot(x - a.x - ex * u, z - a.z - ez * u) < d) return true; } return false; };
-  return { loop, spur, pts, HALF, near };
+  return { loop, spur, pts, draw, HALF, near };
 })();
 const groundShape = new THREE.Shape();
 groundShape.absarc(0, 0, WORLD_R, 0, Math.PI * 2, false);
@@ -896,32 +904,49 @@ const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: g
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
-// the dirt track: a ribbon along each curve, a tyre-rutted dirt texture repeating every 6 m, grassy soft edges
+// the dirt track: a ribbon along each curve, a tyre-rutted dirt texture repeating every 6 m. Soft border (per user): the
+// ribbon runs 1 m past the 6 m road on each side and an alpha map feathers it into the grass with a wavy, grainy edge
+// (its own 24 m repeat, so the edge doesn't visibly repeat with the ruts)
 {
+  const FEATHER = 1, WH = TRACK.HALF + FEATHER, PX = 128 / (2 * WH);                      // texture: 16 px per metre across
   const c = document.createElement('canvas'); c.width = 128; c.height = 256; const x = c.getContext('2d');
   x.fillStyle = '#7d6a4f'; x.fillRect(0, 0, 128, 256);
   for (let i = 0; i < 2600; i++) { const v = 90 + Math.random() * 60 | 0; x.fillStyle = `rgba(${v + 20},${v},${v - 25},${0.25 + Math.random() * 0.35})`; x.fillRect(Math.random() * 128, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2); }
-  for (const cx of [34, 94]) { const gr = x.createLinearGradient(cx - 12, 0, cx + 12, 0); gr.addColorStop(0, 'rgba(60,48,34,0)'); gr.addColorStop(0.5, 'rgba(60,48,34,0.55)'); gr.addColorStop(1, 'rgba(60,48,34,0)'); x.fillStyle = gr; x.fillRect(cx - 12, 0, 24, 256); }   // ruts
-  for (const [x0, x1] of [[0, 14], [128, 114]]) { const gr = x.createLinearGradient(x0, 0, x1, 0); gr.addColorStop(0, 'rgba(98,122,64,0.95)'); gr.addColorStop(1, 'rgba(98,122,64,0)'); x.fillStyle = gr; x.fillRect(Math.min(x0, x1), 0, 14, 256); }   // grassy verges
-  x.fillStyle = 'rgba(98,122,64,0.5)'; x.fillRect(58, 0, 12, 256);                                                                       // grass strip down the middle
+  for (const off of [-1.4, 1.4]) { const cx = 64 + off * PX, gr = x.createLinearGradient(cx - 10, 0, cx + 10, 0); gr.addColorStop(0, 'rgba(60,48,34,0)'); gr.addColorStop(0.5, 'rgba(60,48,34,0.55)'); gr.addColorStop(1, 'rgba(60,48,34,0)'); x.fillStyle = gr; x.fillRect(cx - 10, 0, 20, 256); }   // ruts
+  for (const [x0, x1] of [[0, 30], [128, 98]]) { const gr = x.createLinearGradient(x0, 0, x1, 0); gr.addColorStop(0, 'rgba(110,112,70,0.55)'); gr.addColorStop(1, 'rgba(110,112,70,0)'); x.fillStyle = gr; x.fillRect(Math.min(x0, x1), 0, 30, 256); }   // dusty, grass-tinged shoulders
+  { const gr = x.createLinearGradient(58, 0, 70, 0); gr.addColorStop(0, 'rgba(98,122,64,0)'); gr.addColorStop(0.5, 'rgba(98,122,64,0.5)'); gr.addColorStop(1, 'rgba(98,122,64,0)'); x.fillStyle = gr; x.fillRect(58, 0, 12, 256); }   // soft grass strip down the middle
   const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
-  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  const ribbon = (ps, y, closed) => {
-    const pos = [], uv = [], idx = []; let len = 0;
-    const n = ps.length - (closed ? 1 : 0);
-    for (let i = 0; i < n; i++) {
-      const a = ps[Math.max(0, i - 1)], b = ps[Math.min(ps.length - 1, i + 1)], tx = b.x - a.x, tz = b.z - a.z, L = Math.hypot(tx, tz) || 1;
-      const nx = -tz / L * TRACK.HALF, nz = tx / L * TRACK.HALF;
+  // alpha (green channel): opaque over the road, fading out over the outer metre, the edge line wandering ±0.4 m
+  const ac = document.createElement('canvas'); ac.width = 128; ac.height = 512; const ax = ac.getContext('2d'), img = ax.createImageData(128, 512);
+  const edge = (y, ph) => 16 + 4 * Math.sin(2 * Math.PI * 2 * y / 512 + ph) + 2.5 * Math.sin(2 * Math.PI * 5 * y / 512 + 2 * ph) + 1.2 * Math.sin(2 * Math.PI * 13 * y / 512 + 3 * ph);
+  const sstep = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  for (let y = 0; y < 512; y++) { const eL = edge(y, 0.3), eR = 128 - edge(y, 1.9);
+    for (let xx = 0; xx < 128; xx++) { const a = sstep(eL - 9, eL + 7, xx) * (1 - sstep(eR - 7, eR + 9, xx)), g = Math.max(0, Math.min(255, (a + (Math.random() - 0.5) * 0.25 * (a > 0.02 && a < 0.98)) * 255));
+      const k = (y * 128 + xx) * 4; img.data[k] = img.data[k + 1] = img.data[k + 2] = g; img.data[k + 3] = 255; } }
+  ax.putImageData(img, 0, 0);
+  const atex = new THREE.CanvasTexture(ac); atex.wrapS = atex.wrapT = THREE.RepeatWrapping; atex.repeat.set(1, 0.25);
+  const mat = new THREE.MeshStandardMaterial({ map: tex, alphaMap: atex, vertexColors: true, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const ribbon = (ps, y, closed, order, fadeStart = 0) => {                              // fadeStart: metres faded in at the start
+    const pos = [], uv = [], col = [], idx = []; let len = 0;
+    // closed loops (getSpacedPoints repeats the first point at the end) run their texture on continuously and scale it
+    // so the 24 m alpha pattern tiles a whole number of times; a closing quad wrapping v back to 0 squeezed the whole
+    // texture into one thin strip at the seam
+    let total = 0; for (let i = 1; i < ps.length; i++) total += ps[i].distanceTo(ps[i - 1]);
+    const vs = closed ? 4 * Math.max(1, Math.round(total / 24)) / total : 1 / 6, m1 = ps.length - 1;
+    for (let i = 0; i < ps.length; i++) {
+      const a = closed ? ps[i ? i - 1 : m1 - 1] : ps[Math.max(0, i - 1)], b = closed ? ps[i < m1 ? i + 1 : 1] : ps[Math.min(m1, i + 1)];
+      const tx = b.x - a.x, tz = b.z - a.z, L = Math.hypot(tx, tz) || 1, nx = -tz / L * WH, nz = tx / L * WH;
       if (i) len += ps[i].distanceTo(ps[i - 1]);
-      pos.push(ps[i].x + nx, y, ps[i].z + nz, ps[i].x - nx, y, ps[i].z - nz); uv.push(0, len / 6, 1, len / 6);
+      pos.push(ps[i].x + nx, y, ps[i].z + nz, ps[i].x - nx, y, ps[i].z - nz); uv.push(0, len * vs, 1, len * vs);
+      const al = fadeStart ? Math.min(1, len / fadeStart) : 1; col.push(1, 1, 1, al, 1, 1, 1, al);
       if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); }
     }
-    if (closed) { const k = (n - 1) * 2; idx.push(k, 0, k + 1, k + 1, 0, 1); }
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
     geo.setIndex(idx); geo.computeVertexNormals(); if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
-    const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; scene.add(m);
+    const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; m.renderOrder = order; scene.add(m);
   };
-  ribbon(TRACK.pts[0], 0.012, true); ribbon(TRACK.pts[1], 0.016, false);
+  ribbon(TRACK.draw.stub, 0.01, false, 0); ribbon(TRACK.pts[0], 0.012, true, 1); ribbon(TRACK.pts[2], 0.014, false, 2); ribbon(TRACK.pts[3], 0.014, false, 2);
+  ribbon(TRACK.draw.spur, 0.016, false, 3, 2.5);   // the spur fades in where it starts by the parked vehicles
 }
 
 // camping area — rounded-rect gravel patch; everything outside is grass.
