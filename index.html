@@ -5846,8 +5846,9 @@ function makeString(p1, p2, sag) {
     }
   }
 }
-// per user: only the tree → flysheet-pole strings (the two wooden festoon posts by the fire, their strings and the
-// pole → pole string over the gap were removed)
+// per user: the flysheet pole → pole string and the tree → pole strings (the two wooden festoon posts by the fire and
+// their strings were removed)
+makeString(new THREE.Vector3(0, 2.95, 3), new THREE.Vector3(0, 2.95, -3), 0.7);     // pole → pole over the gap
 makeString(new THREE.Vector3(0, 2.95, 3), new THREE.Vector3(-9.5, 4.0, 6.5), 0.8);   // front pole → tree A
 makeString(new THREE.Vector3(0, 2.95, -3), new THREE.Vector3(9.5, 4.0, -6.5), 0.8);  // back pole → tree B
 const stringLight = new THREE.PointLight(0xffc46b, 0, 10, 2);
