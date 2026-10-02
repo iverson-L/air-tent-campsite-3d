@@ -114,6 +114,8 @@ function makeSunTexture(N = 512) {
     const steel = new THREE.MeshStandardMaterial({ color: 0xc9ccce, roughness: 0.34, metalness: 0.45 });   // brushed stainless (no env map: high metalness rendered near-black)
     const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x0f1316, roughness: 0.08, metalness: 0.6 });
+    // cabin glass (per user: "build cybertruck basic interior"): tinted but see-through, so the cabin shows
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x1c252c, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
     const wellMat = new THREE.MeshStandardMaterial({ color: 0x0e0f10, roughness: 0.95, side: THREE.DoubleSide });
     const mirrorMat = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.6, side: THREE.DoubleSide });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, roughness: 0.45, metalness: 0.5 });
@@ -142,7 +144,7 @@ function makeSunTexture(N = 512) {
     prof.push(...archOf(AX[1]), [AX[1] + 0.62, SILL_Y], [AX[0] - 0.62, SILL_Y], ...archOf(AX[0]));   // the doors reach down to the rocker; arch legs carried down
     prof.push([2.76, 0.62], [HL, 0.66]);
     const bottomY = z => { for (let i = 1; i < prof.length; i++) { const [z0, y0] = prof[i - 1], [z1, y1] = prof[i]; if (z <= z1 + 1e-9) return y0 + (y1 - y0) * (z - z0) / ((z1 - z0) || 1); } return 0.72; };
-    const zs = [...new Set([...prof.map(p => p[0]), ZA, 1.45, -0.76, ...Array.from({ length: 24 }, (_, i) => -HL + (i + 0.5) * (2 * HL) / 24), 2.58, ...Array.from({ length: 6 }, (_, i) => 2.58 + (i + 1) * 0.0433)].map(z => +z.toFixed(4)))].sort((p, q) => p - q);
+    const zs = [...new Set([...prof.map(p => p[0]), ZA, 1.45, -0.76, ...Array.from({ length: 24 }, (_, i) => -HL + (i + 0.5) * (2 * HL) / 24), 2.58, ...Array.from({ length: 6 }, (_, i) => 2.58 + (i + 1) * 0.0433), -0.84, 2.04, 2.2].map(z => +z.toFixed(4)))].sort((p, q) => p - q);
     // the nose (per user's top / front reference): a straight front edge, narrower than the body, with big diagonal
     // corner facets — in plan the sides sweep in by CH over the last CL to the nose (half-width chamW(z))
     // plan shape of the nose (per user, measured off ct_topview.png at ~290 px/m): the side stays ONE flat panel up to
@@ -157,10 +159,19 @@ function makeSunTexture(N = 512) {
       // where the nose chamfer (x = cw) cuts the leaning upper facet: without a ring point on that line the quads
       // twisted into a bright sliver at the front corners (per user: "weird shape artifact")
       const ys = Math.min(t, Math.max(c, c + (HW - cw) / LEAN)), xs = HW - LEAN * (ys - c);
-      return [[-HW + tk, b], [-HW, k], [-HW, c], [-xs, ys], [-wt, t], [0, t], [wt, t], [xs, ys], [HW, c], [HW, k], [HW - tk, b], [0, b]].map(([x, y]) => [Math.sign(x) * Math.min(Math.abs(x), cw), y, tz(y)]); };
+      // a point at the window sill on each upper facet: above it the shell is cut away over the cabin (see CUT_*)
+      const sy = Math.min(t, Math.max(ys, sill(z))), sxp = HW - LEAN * (sy - c);
+      return [[-HW + tk, b], [-HW, k], [-HW, c], [-xs, ys], [-sxp, sy], [-wt, t], [0, t], [wt, t], [sxp, sy], [xs, ys], [HW, c], [HW, k], [HW - tk, b], [0, b]].map(([x, y]) => [Math.sign(x) * Math.min(Math.abs(x), cw), y, tz(y)]); };
+    // the greenhouse is cut out of the shell so you can see into the cabin: the side facets from the window sill up to
+    // the roof edge over z CUT_S, and the top skin (windscreen + roof glass) over z CUT_T. Frames with window holes,
+    // see-through glass and the interior fill it back in (below).
+    const CUT_S = [-0.76, 2.2], CUT_T = [-0.84, 2.04], within = ([a, b], z) => z >= a - 1e-6 && z <= b + 1e-6;
+    const SIDE_SEGS = [4, 7], TOP_SEGS = [5, 6];                       // ring segment k → k+1
     const pos = [], tri = (A, B, C) => pos.push(...A, ...B, ...C);
-    for (let i = 1; i < zs.length; i++) { const r0 = ring(zs[i - 1]), r1 = ring(zs[i]);
-      for (let k = 0; k < r0.length; k++) { const k2 = (k + 1) % r0.length; tri(r0[k], r0[k2], r1[k2]); tri(r0[k], r1[k2], r1[k]); } }
+    for (let i = 1; i < zs.length; i++) { const za = zs[i - 1], zb = zs[i], r0 = ring(za), r1 = ring(zb);
+      const cutS = within(CUT_S, za) && within(CUT_S, zb), cutT = within(CUT_T, za) && within(CUT_T, zb);
+      for (let k = 0; k < r0.length; k++) { if ((cutS && SIDE_SEGS.includes(k)) || (cutT && TOP_SEGS.includes(k))) continue;
+        const k2 = (k + 1) % r0.length; tri(r0[k], r0[k2], r1[k2]); tri(r0[k], r1[k2], r1[k]); } }
     { const body = new THREE.BufferGeometry(); body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); body.computeVertexNormals();
       // side faces must point out: judge by the first clearly side-facing triangle (some ring points coincide, so
       // the very first triangle can be degenerate)
@@ -175,8 +186,10 @@ function makeSunTexture(N = 512) {
       const caps = new THREE.BufferGeometry(); caps.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3)); caps.computeVertexNormals();
       g.add(new THREE.Mesh(caps, steel)); }
     // overlay panels on the side surface (windows, the driver's door): drawn in (z, y), placed on the facet they sit on
-    const panel = (poly, sx, mat, off = 0) => {
-      const geo = new THREE.ShapeGeometry(new THREE.Shape(poly.map(([z, y]) => new THREE.Vector2(z, y)))), pp = geo.attributes.position;
+    const panel = (poly, sx, mat, off = 0, holes = []) => {
+      const shp = new THREE.Shape(poly.map(([z, y]) => new THREE.Vector2(z, y)));
+      for (const h of holes) shp.holes.push(new THREE.Path(h.map(([z, y]) => new THREE.Vector2(z, y))));
+      const geo = new THREE.ShapeGeometry(shp), pp = geo.attributes.position;
       for (let i = 0; i < pp.count; i++) { const z = pp.getX(i), y = pp.getY(i); pp.setXYZ(i, sx * (inset(y, z) + off), y, z); }
       if (sx > 0) { const ix = geo.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } }   // face outward
       geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); g.add(m); return m;
@@ -282,16 +295,22 @@ function makeSunTexture(N = 512) {
     // per user (ct_topview.png): no steel between the glass panels — one gloss-black frame under the windscreen and
     // roof glass, from the windscreen's front edge back to the vault, so the apex bar and the 10 cm strip behind the
     // roof glass read black; only the thin side bezels stay steel
-    { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2 });   // split at the apex, or the ridge pokes through
-      glassTop(2.04, 2.04, ZA, 0.025, fm, 0.006); glassTop(ZA, ZA, -0.84, 0.025, fm, 0.006); }
-    glassTop(2.04, 2.04, ZA + 0.03, 0.025, dark);                                                           // windscreen: straight front edge (ct_topview / ct_43view)
-    glassTop(ZA - 0.03, ZA - 0.03, -0.74, 0.025, dark);                                                     // roof glass
+    // the black frame round the top glass is now a FRAME (the shell under it is cut away): the apex bar, the 10 cm bar
+    // behind the roof glass, and 3 cm strips along both top edges
+    { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2, side: THREE.DoubleSide });
+      glassTop(ZA + 0.03, ZA + 0.03, ZA - 0.03, 0, fm, 0.006); glassTop(-0.74, -0.74, -0.84, 0, fm, 0.006);
+      const edge = (z0, z1, sx) => { const pos = [], idx = [], N = 12;
+        for (let i = 0; i <= N; i++) { const z = z0 + (z1 - z0) * i / N, y = topY(z) + 0.006, w = inset(topY(z), z); pos.push(sx * (w - 0.03), y, z, sx * w, y, z); if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); } }
+        const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, fm)); };
+      for (const sx of [-1, 1]) { edge(2.04, ZA, sx); edge(ZA, -0.84, sx); } }
+    glassTop(2.04, 2.04, ZA + 0.03, 0.025, glassMat);                                                       // windscreen: straight front edge (ct_topview / ct_43view)
+    glassTop(ZA - 0.03, ZA - 0.03, -0.74, 0.025, glassMat);                                                 // roof glass
     const vault = (() => {                                              // black slatted vault cover
       const c = document.createElement('canvas'); c.width = 32; c.height = 256; const x = c.getContext('2d');
       x.fillStyle = '#1c1d1f'; x.fillRect(0, 0, 32, 256); for (let i = 0; i < 256; i += 8) { x.fillStyle = '#0e0f10'; x.fillRect(0, i, 32, 2); }
       const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0.3 }); })();
     { const m = onTop(-0.86, -HL + 0.04, 0.12, 0.12, vault); const uv = []; for (const v of [[0, 0], [1, 0], [0, 1], [1, 1]]) uv.push(...v); m.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); }
-    const sideWin = (poly, sx) => panel(poly, sx, dark, 0.009);
+    const sideWin = (poly, sx) => panel(poly, sx, glassMat, 0.009);
     // window band (per user, ct_sideview.png): the whole greenhouse side is BLACK — no steel between the panes — from
     // the sill up to just under the roof edge, with the glass laid on it. Its top is ONE straight line from the quarter
     // triangle's tip (z 2.2, on the sill) up to the roof apex, shared by the quarter glass and the front door glass.
@@ -302,13 +321,17 @@ function makeSunTexture(N = 512) {
     const winQ = [[zq, cy(zq)], [1.34, cy(1.34)], [1.34, ty(1.34)]];                                       // quarter glass (triangle)
     const winF = [[1.30, cy(1.30)], [0.37, cy(0.37)], [0.37, ty(0.37)], [ZA, ty(ZA)], [1.30, ty(1.30)]];   // front door window
     const winR = [[0.23, cy(0.23)], [-0.72, cy(-0.72)], [-0.72, ty(-0.72)], [0.23, ty(0.23)]];              // rear door window
-    const bandMat = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2 });
-    const bandF = [[ZT, lo(ZT)], [1.45, lo(1.45)], [1.43, lo(1.43)], [1.43, bandTop(1.43)]];
-    const bandD = [[1.42, lo(1.42)], [0.31, lo(0.31)], [0.31, bandTop(0.31)], [ZA, bandTop(ZA)], [1.42, bandTop(1.42)]];
-    const bandR = [[0.3, lo(0.3)], [-0.76, lo(-0.76)], [-0.76, bandTop(-0.76)], [0.3, bandTop(0.3)]];
+    const bandMat = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2, side: THREE.DoubleSide });
+    // band pieces are FRAMES round their window (the shell behind is cut away); they overlap ~1 cm at the shut lines
+    const bandF = [[ZT, lo(ZT)], [1.41, lo(1.41)], [1.41, bandTop(1.41)]];
+    const bandD = [[1.425, lo(1.425)], [0.305, lo(0.305)], [0.305, bandTop(0.305)], [ZA, bandTop(ZA)], [1.425, bandTop(1.425)]];
+    const bandR = [[0.32, lo(0.32)], [-0.765, lo(-0.765)], [-0.765, bandTop(-0.765)], [0.32, bandTop(0.32)]];
+    // steel above the band (the A-pillar side triangle, then a thin strip to the roof edge), black on its inside
+    const capS = [[ZT + 0.005, lo(ZT)], [ZT + 0.005, topY(ZT + 0.005)], [ZA, topY(ZA)], [-0.765, topY(-0.765)], [-0.765, bandTop(-0.765)], [ZA, bandTop(ZA)]];
     for (const sx of [-1, 1]) {
       // windows sit on the crease line: a front quarter triangle, the front door window (driver's moves with the door), rear door
-      panel(bandF, sx, bandMat, 0.005); panel(bandR, sx, bandMat, 0.005); if (sx > 0) panel(bandD, sx, bandMat, 0.005);
+      panel(bandF, sx, bandMat, 0.005, [winQ]); panel(bandR, sx, bandMat, 0.005, [winR]); if (sx > 0) panel(bandD, sx, bandMat, 0.005, [winF]);
+      panel(capS, sx, steel, 0.002); panel(capS, sx, bandMat, -0.004);
       sideWin(winQ, sx);
       if (sx > 0) sideWin(winF, sx);
       sideWin(winR, sx);
@@ -357,8 +380,43 @@ function makeSunTexture(N = 512) {
     { const lowerPoly = [[1.42, TK0], [0.31, TK0], [0.31, crease(0.31)], [1.42, crease(1.42)]], footPoly = [[1.42, SILL_Y], [0.31, SILL_Y], [0.31, TK0], [1.42, TK0]];
       for (const poly of [lowerPoly, footPoly]) { const dp = panel(poly, -1, steel, 0.004); g.remove(dp); dp.position.set(HW, 0, -1.43); doorPivot.add(dp); }
       const up = panel([[1.42, crease(1.42)], [0.31, crease(0.31)], [0.31, lo(0.31)], [1.42, lo(1.42)]], -1, steel, 0.004); g.remove(up); up.position.set(HW, 0, -1.43); doorPivot.add(up);   // facet strip up to the glass
-      const db = panel(bandD, -1, bandMat, 0.008); g.remove(db); db.position.set(HW, 0, -1.43); doorPivot.add(db);
-      const dw = panel(winF, -1, dark, 0.012); g.remove(dw); dw.position.set(HW, 0, -1.43); doorPivot.add(dw); }
+      const db = panel(bandD, -1, bandMat, 0.008, [winF]); g.remove(db); db.position.set(HW, 0, -1.43); doorPivot.add(db);
+      const dw = panel(winF, -1, glassMat, 0.012); g.remove(dw); dw.position.set(HW, 0, -1.43); doorPivot.add(dw); }
+    // ---- basic interior (per user): floor, firewall, rear bulkhead, door trims, a long flat dash with the landscape
+    // centre screen, the squircle wheel (RHD: driver on −x), two front buckets, a 3-seat rear bench, a centre console
+    { const trim = new THREE.MeshStandardMaterial({ color: 0x2b2d30, roughness: 0.85 }), seatMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.7 });
+      const dashMat = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.6 }), wood = new THREE.MeshStandardMaterial({ color: 0x3a3e42, roughness: 0.4, metalness: 0.3 });
+      const screenMat = new THREE.MeshStandardMaterial({ color: 0x0b0e12, roughness: 0.2, emissive: 0x1d3a55, emissiveIntensity: 0.6 });
+      const IW = HW - 0.06;                                                  // inner half-width
+      box(2 * IW, 0.04, 2.42, trim, 0, 0.5, 0.39, g, 0.01);                 // floor (z −0.82 → 1.6; the front wheel arches span the width ahead of it)
+      box(2 * IW, 0.47, 0.04, trim, 0, 0.735, 1.6, g, 0.01);                 // footwell front wall, up to the arch top
+      // firewall and rear bulkhead: the shell's own cross-section, pulled in 4 %
+      for (const [z, y0] of [[2.02, 0.95], [-0.82, 0.48]]) {             // the firewall sits above the front arches
+        const r = ring(z).map(([x, y]) => new THREE.Vector2(x * 0.96, Math.max(y0, y > 1 ? y - 0.01 : y)));
+        const m = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(r)), new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.9, side: THREE.DoubleSide })); m.position.z = z; g.add(m); }
+      // door trims up to the window sill (they hide the shell's inside); the driver's front one rides its door
+      const trimBox = (z0, z1, sx, parent) => { const top = lo(z0) - 0.012, h = top - 0.52, b = box(0.05, h, z0 - z1, trim, sx * (HW - 0.075), 0.52 + h / 2, (z0 + z1) / 2, parent, 0.01);
+        box(0.09, 0.03, (z0 - z1) * 0.7, wood, sx * (HW - 0.12), 1.0, (z0 + z1) / 2, parent, 0.008); return b; };   // armrest
+      for (const sx of [-1, 1]) { trimBox(2.0, 1.43, sx, g); trimBox(0.3, -0.8, sx, g); if (sx > 0) trimBox(1.42, 0.31, sx, g); }
+      { const t = trimBox(1.42, 0.31, -1, g), a = g.children.at(-1); for (const o of [t, a]) { g.remove(o); o.position.x += HW; o.position.z -= 1.43; doorPivot.add(o); } }
+      // dash: a long flat slab across the cabin under the windscreen, a soft lower fascia, the 18.5" screen in the middle
+      box(2 * IW - 0.04, 0.07, 0.42, dashMat, 0, 1.12, 1.75, g, 0.03);
+      box(2 * IW - 0.08, 0.32, 0.3, trim, 0, 0.93, 1.85, g, 0.04);
+      { const sc = box(0.42, 0.26, 0.025, screenMat, 0, 1.3, 1.56, g, 0.01); sc.rotation.x = -0.28; }
+      { const ac = box(1.6, 0.012, 0.012, new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.3, metalness: 0.7 }), 0, 1.1, 1.54, g, 0.004); }   // vent strip
+      // squircle steering wheel on a short column, in front of the driver
+      { const sw = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.02, 10, 40), dashMat); sw.scale.set(1.05, 0.82, 1); sw.position.set(-0.45, 1.08, 1.4); sw.rotation.x = -0.3; g.add(sw);
+        const hub = box(0.12, 0.08, 0.05, dashMat, -0.45, 1.08, 1.41, g, 0.02); hub.rotation.x = -0.3;
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.3, 10), dashMat); col.position.set(-0.45, 1.06, 1.55); col.rotation.x = Math.PI / 2 - 0.3; g.add(col);
+        const spoke = box(0.32, 0.025, 0.02, dashMat, -0.45, 1.08, 1.405, g, 0.008); spoke.rotation.x = -0.3; }
+      // seats
+      const seat = (x, z, w) => { box(w, 0.13, 0.52, seatMat, x, 0.66, z, g, 0.05);
+        const back = box(w, 0.62, 0.12, seatMat, x, 1.0, z - 0.28, g, 0.05); back.rotation.x = -0.2; };
+      for (const x of [-0.45, 0.45]) { seat(x, 0.95, 0.52); box(0.3, 0.17, 0.1, seatMat, x, 1.41, 0.6, g, 0.04); }   // front buckets + headrests
+      seat(0, -0.28, 1.78); for (const x of [-0.58, 0, 0.58]) box(0.28, 0.14, 0.09, seatMat, x, 1.41, -0.64, g, 0.04);   // rear bench + headrests
+      box(0.26, 0.26, 0.75, trim, 0, 0.66, 1.05, g, 0.03);                // centre console
+      box(0.22, 0.02, 0.5, wood, 0, 0.8, 1.05, g, 0.008);
+    }
     // wheels: lathed 35" tyres with a dark 6-spoke rim (dynamic: they spin and steer when driven)
     // tyre lip (r 0.26) tucks over a rim that runs the full tyre width — a 2 cm see-through ring showed at the rim before
     const tyreGeo = new THREE.LatheGeometry([[0.26, -0.15], [0.38, -0.16], [0.425, -0.14], [TR, -0.09], [TR, 0.09], [0.425, 0.14], [0.38, 0.16], [0.26, 0.15]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
@@ -377,9 +435,9 @@ function makeSunTexture(N = 512) {
     const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-1, 1].map(sx => [sx * (XN + 0.5 * CH + 0.03 * cnx), hlY, HL - 0.5 * CL + 0.03 * cnz]), { light: 0xf2f6ff, beam: 0xeef4ff, flare: 0xf4f8ff, flareSize: 0.5 });
     g.position.set(TRUCK_AT[0], 0, TRUCK_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
-    g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
+    g.traverse(o => { if (o.isMesh && (o.material === dark || o.material === glassMat)) o.castShadow = false; });
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
+    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: { x: -0.45, y: 1.45, z: 0.72 },   // driver's view (V)
       WB: 3.81, MAXF: 18, ACC: 7.8, BRK: 11, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.9], camDist: 8, ev: true, name: 'Cybertruck' };
   }
 
