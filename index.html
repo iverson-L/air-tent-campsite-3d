@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 <title>Spark Air Tent Camping 3D Tour</title>
 <meta name="description" content="Walk around a 3D campsite of Spark inflatable air tents (Block 10, 09 and 05): see-through mesh windows, air beds, sofa, campfire, festoon lights, day and night, and first-person walk mode." />
 <meta name="theme-color" content="#1a2440" />
@@ -28,7 +28,11 @@
     --radius: 12px; --shadow: 0 8px 28px rgba(15,23,42,.18), 0 1px 3px rgba(15,23,42,.10);
   }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #87b5d9; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none; -webkit-user-select: none; }
-  #app { width: 100%; height: 100%; position: relative; z-index: 0; } /* stacking context: CSS2D labels set their own z-index — keep them under the panel */
+  /* per user: rotating a phone left the canvas sized for the old orientation, out of bounds — the canvas and the label
+     layer are pinned to the viewport by CSS (their pixel buffers are resized separately in fit()) */
+  #app > canvas { position: fixed; inset: 0; width: 100% !important; height: 100% !important; display: block; }
+  html, body { overscroll-behavior: none; }
+  #app { width: 100%; height: 100%; position: relative; z-index: 0; overflow: hidden; } /* stacking context: CSS2D labels set their own z-index — keep them under the panel */
 
   /* ---------- loading screen (per user: improved) ---------- */
   #loader { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; overflow: hidden; background: #0f1724; transition: opacity .6s ease; }
@@ -149,6 +153,10 @@
     background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
   #actHud { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 21; display: none; cursor: pointer;
     background: rgba(20,22,26,.80); color: #f3f4f6; font-size: 13px; padding: 9px 16px; border-radius: 999px; white-space: nowrap; }
+  /* touch driving: icon-only buttons in a row at the top right, under ✕ Get out, clear of the stick and the look ring */
+  body #actHud.drive { left: auto; right: 16px; top: 62px; bottom: auto; transform: none; margin: 0; width: auto; padding: 6px; border-radius: 16px; white-space: nowrap; line-height: 1; }
+  #actHud.drive button { width: 50px; height: 50px; margin: 0 3px; font-size: 24px; line-height: 1; border: 0; border-radius: 12px; background: rgba(255,255,255,.16); color: #fff; touch-action: manipulation; }
+  #actHud.drive button:active { background: rgba(255,255,255,.34); }
   #actHud kbd,
   #fishHud kbd { font: 600 11px/1 ui-monospace, monospace; background: rgba(255,255,255,.18); border-radius: 4px; padding: 2px 5px; margin: 0 2px; }
   #fishExit { position: fixed; right: 16px; top: 16px; z-index: 31; display: none; font: 600 14px/1 system-ui, sans-serif; color: #f3f4f6;
@@ -346,7 +354,7 @@ const PHONE = innerWidth < 520;
 const MAX_DPR = LOW_END ? 1.5 : 2;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_DPR));
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(innerWidth, innerHeight, false);   // CSS sizes the canvas (see #app > canvas)
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container.appendChild(renderer.domElement);
@@ -7441,10 +7449,13 @@ car = (() => {
     _w.set(camera.position.x, 0, camera.position.z); let best = null, bd = 1.6;
     for (const r of rigs) { const d = doorSpot(r).distanceTo(_w); if (d < bd) { bd = d; best = r; } } return best; };
   const near = () => !!nearRig();
-  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'car'; };
-  const hush = () => { if (hud.dataset.owner === 'car') { hud.style.display = 'none'; hud.dataset.owner = ''; } };
+  // drive = the in-car control strip: on touch it's an icon-only row at the top right (per user: words dropped, and the
+  // full-width bottom pill overlapped the joystick)
+  const say = (html, drive = false) => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'car'; hud.classList.toggle('drive', drive && TOUCH); };
+  const hush = () => { if (hud.dataset.owner === 'car') { hud.style.display = 'none'; hud.dataset.owner = ''; hud.classList.remove('drive'); } };
   const IN = () => (TOUCH ? '' : '<kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Space</kbd> brake · <kbd>V</kbd> view · <kbd>E</kbd> get out · ')
-    + '<button data-act="lights">💡 Lights</button> <button data-act="horn">📯 Horn</button> <button data-act="view">🎥 View</button>';
+    + (TOUCH ? '<button data-act="lights" aria-label="Lights">💡</button><button data-act="horn" aria-label="Horn">📯</button><button data-act="view" aria-label="View">🎥</button>'
+      : '<button data-act="lights">💡 Lights</button> <button data-act="horn">📯 Horn</button> <button data-act="view">🎥 View</button>');
   function buildObstacles() {                       // static scene parts' boxes (tents, props…), tree trunks
     obstacles = { boxes: [], trees: [] };
     const b = new THREE.Box3();
@@ -7484,7 +7495,7 @@ car = (() => {
     exitBtn.textContent = '✕ Get out'; exitBtn.style.display = 'block';
     rig.doorWant = 1; snd.door(); pending = 'in';        // door swings open, then you're in and it shuts
     heading = g.rotation.y; camYaw = 0; view = 'chase';
-    say(IN());
+    say(IN(), true);
   }
   function stop() {
     if (!active) return;
@@ -7995,7 +8006,7 @@ let dockCloth = null;
 
 relayout();
 window.__scene = scene; window.__camera = camera; window.__controls = controls; window.__renderer = renderer; // debug handles (MCP / console)
-window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun, get acts() { return acts; } };                                       // profiling handles
+window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun, get acts() { return acts; }, get car() { return car; } };                                       // profiling handles
 
 function updateCoverage() {
   const xC = gap / 2 + W / 2;                    // tent centerline (= its roof ridge x)
@@ -8118,13 +8129,23 @@ function adaptResolution() {                          // wall-clock frame time (
 }
 
 // ---------- resize + loop ----------
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+// per user: on a phone rotation, 'resize' can fire before the new viewport size has settled, so fit() reads the
+// container's real size and re-runs a few times after an orientation change
+function fit() {
+  const w = container.clientWidth || innerWidth, h = container.clientHeight || innerHeight;
+  if (w < 2 || h < 2) return;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(pixelRatio()); // window moved between monitors
-  renderer.setSize(innerWidth, innerHeight);
-  labelRenderer.setSize(innerWidth, innerHeight);
-});
+  renderer.setSize(w, h, false);
+  labelRenderer.setSize(w, h);
+  if (scrollX || scrollY) scrollTo(0, 0);
+}
+addEventListener('resize', fit);
+const fitSoon = () => { fit(); for (const ms of [120, 350, 700, 1200]) setTimeout(fit, ms); };
+addEventListener('orientationchange', fitSoon);
+screen.orientation?.addEventListener?.('change', fitSoon);
+visualViewport?.addEventListener('resize', fit);
 
 applyLights();                               // start-up: drop the lights that are dark by day from the shaders
 await stage('Optimising…', 92);
