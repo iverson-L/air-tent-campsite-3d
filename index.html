@@ -961,6 +961,11 @@ scene.add(ground);
     }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
     geo.setIndex(idx); geo.computeVertexNormals(); if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
+    { // shade with the terrain's own normals (per user: a black patch at the T junction): on the tight fillets the inner
+      // edge folds back over itself, and averaged face normals there pointed down → black
+      const P = geo.attributes.position, N = geo.attributes.normal, e = 0.5;
+      for (let i = 0; i < P.count; i++) { const x = P.getX(i), z = P.getZ(i), nx = groundH(x - e, z) - groundH(x + e, z), nz = groundH(x, z - e) - groundH(x, z + e), l = Math.hypot(nx, 2 * e, nz); N.setXYZ(i, nx / l, 2 * e / l, nz / l); }
+      N.needsUpdate = true; }
     const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; m.renderOrder = order; m.userData.ground = true; scene.add(m);   // ground: never a collision box
   };
   ribbon(TRACK.draw.stub, 0.01, false, 0); ribbon(TRACK.pts[0], 0.012, true, 1); ribbon(TRACK.pts[2], 0.014, false, 2); ribbon(TRACK.pts[3], 0.014, false, 3);   // every piece its own order: equal orders sort by distance and flip-flopped (per user)
@@ -5964,6 +5969,9 @@ function applyLook() {                                 // everything visual, fro
   const n = nightK, r = rainK;
   sun.intensity = lerp(1.6, 0.35, n) * lerp(1, 0.3, r);
   sun.color.copy(_sunC.copy(SUNC.day).lerp(SUNC.night, n));
+  // the night 'sun' is soft moonlight with no disc in the sky: the Cybertruck's steel goes satin at night, so it no
+  // longer shows a sharp white sun highlight (per user)
+  if (life?.truck?.steel) life.truck.steel.roughness = lerp(0.34, 0.85, n);
   hemi.intensity = lerp(0.85, 0.25, n) * lerp(1, 0.9, r);
   if (!wasUnder) { const fb = fogBase(); scene.fog.color.copy(fb.c); scene.fog.near = fb.n; scene.fog.far = fb.f; }
   skyNightMat.opacity = n;
@@ -6529,7 +6537,7 @@ life = (() => {
           const a = pts[i - 1], b = pts[i], d = b.clone().sub(a), seg = new THREE.Mesh(new THREE.BoxGeometry(d.length() + 0.012, h, 0.012), mat);
           seg.position.copy(a).addScaledVector(d, 0.5); seg.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), d.normalize()); g.add(seg);
         } } }
-    box(2.08, 0.03, 0.03, tailMat, 0, 1.335, -HL - 0.012, g, 0.01);
+    box(2.08, 0.018, 0.006, tailMat, 0, 1.335, -HL - 0.002, g, 0.002);   // tail light bar: a thin strip almost flush with the tail face (per user: flatter)
     // dark glass on the facets: windscreen, roof glass behind the apex, side windows (front + rear door)
     const onTop = (z0, z1, m0, m1, mat) => {                            // a quad lying on the top skin between z0 and z1
       const pts = []; for (const [z, m] of [[z0, m0], [z1, m1]]) { const y = topY(z) + 0.006, w = inset(topY(z), z) - m; pts.push([-w, y, z], [w, y, z]); }
@@ -6650,7 +6658,7 @@ life = (() => {
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
+    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
       WB: 3.81, MAXF: 18, ACC: 7.8, BRK: 11, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.9], camDist: 8, ev: true, name: 'Cybertruck' };
   }
 

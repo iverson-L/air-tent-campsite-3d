@@ -258,7 +258,7 @@ function makeSunTexture(N = 512) {
           const a = pts[i - 1], b = pts[i], d = b.clone().sub(a), seg = new THREE.Mesh(new THREE.BoxGeometry(d.length() + 0.012, h, 0.012), mat);
           seg.position.copy(a).addScaledVector(d, 0.5); seg.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), d.normalize()); g.add(seg);
         } } }
-    box(2.08, 0.03, 0.03, tailMat, 0, 1.335, -HL - 0.012, g, 0.01);
+    box(2.08, 0.018, 0.006, tailMat, 0, 1.335, -HL - 0.002, g, 0.002);   // tail light bar: a thin strip almost flush with the tail face (per user: flatter)
     // dark glass on the facets: windscreen, roof glass behind the apex, side windows (front + rear door)
     const onTop = (z0, z1, m0, m1, mat) => {                            // a quad lying on the top skin between z0 and z1
       const pts = []; for (const [z, m] of [[z0, m0], [z1, m1]]) { const y = topY(z) + 0.006, w = inset(topY(z), z) - m; pts.push([-w, y, z], [w, y, z]); }
@@ -379,7 +379,7 @@ function makeSunTexture(N = 512) {
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
+    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
       WB: 3.81, MAXF: 18, ACC: 7.8, BRK: 11, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.9], camDist: 8, ev: true, name: 'Cybertruck' };
   }
 
