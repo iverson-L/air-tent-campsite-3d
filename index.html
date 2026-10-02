@@ -221,7 +221,7 @@
       'Try <b>First person mode</b>, walk into the pond to swim and hold <b>C</b> to dive.',
       'Walk up to the stool by the pond and press <b>E</b> to go fishing.',
       'Campers wander the site — they head for shelter when it rains.',
-      'Press <b>6</b> to toggle the birds, crickets and rain sounds.',
+      'Press <b>6</b> to toggle the campfire, birds and rain sounds.',
       '<b>Copy view link</b> in the settings shares exactly what you are looking at.'];
     let i = Math.random() * tips.length | 0;
     const el = document.getElementById('ldTip');
@@ -6276,7 +6276,7 @@ life = (() => {
     m.position.y = POND.waterY + 0.006; scene.add(m); return { m, t: 1 + Math.random() };
   });
 
-  // ===== SOUND (procedural Web Audio — no files): breeze + birds (day), crickets (night), water
+  // ===== SOUND (procedural Web Audio — no files): birds (day), crickets (night), a soft campfire, water
   //       lapping by the pond, rain. Positional sounds get louder as you walk up to them. Starts on first click/key. =====
   const listener = new THREE.AudioListener();
   camera.add(listener);
@@ -6285,7 +6285,20 @@ life = (() => {
   const chirp = (d, t0, dur, f0, f1, amp) => { const s0 = Math.floor(t0 * SR), n = Math.floor(dur * SR); let ph = 0;
     for (let i = 0; i < n && s0 + i < d.length; i++) { const u = i / n, f = f0 + (f1 - f0) * u; ph += 2 * Math.PI * f / SR; d[s0 + i] += Math.sin(ph) * Math.sin(Math.PI * u) ** 2 * amp; } };
   const bufs = {
-    breeze: buf(12, (d, n) => { let b = 0; for (let i = 0; i < n; i++) { b = (b + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = b * (0.55 + 0.45 * Math.sin(2 * Math.PI * 2 * i / n)); } }),
+    // fire (per user: the first versions sounded like a blazing roar): a quiet log fire — a barely-there warm murmur,
+    // sparse small crackles in little clusters, and the odd soft pop. Crackles set the peak (the buffer is normalised),
+    // so the murmur stays faint
+    fire: buf(10, (d, n) => {
+      let lp = 0, lp2 = 0;
+      for (let i = 0; i < n; i++) { lp += 0.004 * ((Math.random() * 2 - 1) - lp); lp2 += 0.02 * (lp - lp2); d[i] = lp2 * 1.2; }   // faint murmur
+      const tick = (s0, len, a, soft) => { let f = 0, f2 = 0;                                                                // one crackle
+        for (let i = 0; i < len && s0 + i < n; i++) { f += soft * ((Math.random() * 2 - 1) - f); f2 += 0.5 * (f - f2); d[s0 + i] += (f - f2) * a * Math.exp(-6 * i / len); } };
+      for (let c = 0; c < 26; c++) {                                                         // clusters of 1–4 ticks within ~60 ms
+        let s0 = Math.random() * n | 0;
+        for (let k = 1 + (Math.random() * 4 | 0); k > 0; k--) { tick(s0, rnd(0.002, 0.008) * SR | 0, rnd(0.25, 1), 0.6); s0 += rnd(0.008, 0.06) * SR | 0; }
+      }
+      for (let c = 0; c < 3; c++) tick(Math.random() * n | 0, rnd(0.02, 0.04) * SR | 0, rnd(0.5, 0.8), 0.15);            // soft, lower pops
+    }),
     // birds (per user: were too noisy): two short, lower, gentler phrases in a 16 s loop each — long quiet gaps
     birds: [0, 1, 2].map(() => buf(16, d => { for (let p = 0; p < 2; p++) { let t = 1 + p * 7 + Math.random() * 5; const f = rnd(1900, 2900), notes = 2 + (Math.random() * 3 | 0);
       for (let k = 0; k < notes; k++) { chirp(d, t, rnd(0.08, 0.16), f * rnd(0.95, 1.1), f * rnd(0.85, 1.15), rnd(0.5, 0.9)); t += rnd(0.14, 0.26); } } })),
@@ -6299,7 +6312,8 @@ life = (() => {
     a.panner.panningModel = 'equalpower';   // plain stereo panning — the default HRTF convolution costs CPU every audio frame
     const o = new THREE.Object3D(); o.position.copy(at); o.add(a); parent.add(o); return a; };
   const snd = {
-    breeze: amb(bufs.breeze), crickets: amb(bufs.crickets), rain: amb(bufs.rain),
+    crickets: amb(bufs.crickets), rain: amb(bufs.rain),
+    fire: pos(bufs.fire, V(0, 0.4, 0), 2.2, fireGroup),
     water: pos(bufs.water, V(POND.x, 0, POND.z), 3.5),
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
   };
@@ -6307,7 +6321,7 @@ life = (() => {
   const applySound = () => {
     listener.setMasterVolume(soundOn ? 1 : 0);
     // quieter mix overall (per user: fire and birds were too noisy)
-    snd.breeze.setVolume(rain ? 0.08 : night ? 0.12 : 0.2);
+    snd.fire.setVolume(night ? 0.3 : 0.22);
     for (const b of snd.birds) b.setVolume(!night && !rain ? 0.16 : 0);
     snd.crickets.setVolume(night && !rain ? 0.14 : 0);
     snd.rain.setVolume(rain ? 0.4 : 0);
@@ -6317,7 +6331,7 @@ life = (() => {
     if (started) return;
     started = true;
     ctx.resume();
-    for (const a of [snd.breeze, snd.crickets, snd.rain, snd.water, ...snd.birds]) a.play();
+    for (const a of [snd.crickets, snd.rain, snd.fire, snd.water, ...snd.birds]) a.play();
     applySound();
   };
   addEventListener('pointerdown', startAudio); addEventListener('keydown', startAudio);   // browsers need a gesture first
