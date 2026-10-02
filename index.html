@@ -374,8 +374,8 @@ camera.position.set(15, 10, 17);  // whole (enlarged) site incl. the unit across
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 3.5);
 controls.maxPolarAngle = Math.PI * 0.95; // can swing below the orbit centre to look UP (per user); the loop lowers it so the camera stays above the ground
-controls.minDistance = 1.5; // close enough to fly in with WASD
-controls.maxDistance = 70;
+controls.minDistance = 0;    // per user: scroll right in (OrbitControls' default)
+controls.maxDistance = 50;   // per user
 controls.update();
 
 // ---------- first person mode (WASD + mouse look, Ctrl ducks) ----------
@@ -684,7 +684,7 @@ function makeGrassTexture(size = 512) {
   const ctx = c.getContext('2d');
 
   // base: dark soil-green showing through between the blades
-  ctx.fillStyle = '#465c30';
+  ctx.fillStyle = '#3d5a24';
   ctx.fillRect(0, 0, size, size);
 
   // uneven ground mottling (light/dark patches)
@@ -711,12 +711,12 @@ function makeGrassTexture(size = 512) {
 
   // lawn tone palette: deep green → yellow-green, with a few dry blades
   const tones = [
-    [58, 96, 40],   // deep green
-    [74, 118, 48],  // mid green
-    [92, 138, 58],  // bright green
-    [112, 148, 66], // yellow-green
-    [128, 140, 70], // olive / worn
-    [140, 128, 82], // dry tan (rare)
+    [52, 98, 34],   // deep green
+    [72, 126, 44],  // mid green
+    [98, 156, 56],  // bright green
+    [132, 170, 64], // yellow-green (sunlit tips)
+    [138, 146, 66], // olive / worn
+    [160, 140, 84], // dry tan (rare)
   ];
   const pickTone = () => {
     const r = Math.random();
@@ -751,6 +751,7 @@ function makeGrassTexture(size = 512) {
   for (let i = 0; i < 1800; i++) drawBlade(Math.random() * size, Math.random() * size);
 
   const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;   // per user ("looks dull"): without it the canvas colours were read as linear → washed out
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return tex;
@@ -910,7 +911,26 @@ const groundGeo = new THREE.ShapeGeometry(groundShape, 96);
   const uv = groundGeo.attributes.uv, pp = groundGeo.attributes.position;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, pp.getX(i) / 90 + 0.5, pp.getY(i) / 90 + 0.5);
 }
-const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 }));
+const groundMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1 });
+{ // break up the 2 m tile (per user: dull): blend in a second sample of the grass at another scale and offset, and lay
+  // gentle ~40 m light / dark patches over the field (a soft macro noise, linear data)
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  x.fillStyle = '#808080'; x.fillRect(0, 0, S, S);
+  for (let i = 0; i < 70; i++) { const px = Math.random() * S, py = Math.random() * S, r = 18 + Math.random() * 60, v = Math.random() < 0.5 ? 40 : 215;
+    for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { const g = x.createRadialGradient(px + ox, py + oy, 0, px + ox, py + oy, r);
+      g.addColorStop(0, `rgba(${v},${v},${v},0.22)`); g.addColorStop(1, `rgba(${v},${v},${v},0)`); x.fillStyle = g; x.fillRect(px + ox - r, py + oy - r, 2 * r, 2 * r); } }
+  const macro = new THREE.CanvasTexture(c); macro.wrapS = macro.wrapT = THREE.RepeatWrapping;
+  groundMat.onBeforeCompile = sh => {
+    sh.uniforms.uMacro = { value: macro };
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D uMacro;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        { vec2 r = mat2(0.8, -0.6, 0.6, 0.8) * vMapUv * 0.37 + vec2(0.17, 0.53);
+          diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(map, r).rgb, 0.4);
+          float m = texture2D(uMacro, vMapUv / 21.0).r;
+          diffuseColor.rgb *= mix(vec3(0.9, 0.97, 0.84), vec3(1.34, 1.3, 1.08), m); }`);
+  };
+}
+const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
@@ -6118,6 +6138,17 @@ life = (() => {
   let night = false, rain = false;
 
   // ===== 3D grass tufts + wildflower patches on the grass (instanced, swaying; none on the gravel or in the pond) =====
+  // per user (grass grew through the picnic mat): props placed after the grass clear the tufts and flowers under them
+  let plants = null;
+  const clearPlants = (cx, cz, hx, hz, rot = 0) => { if (!plants) return;
+    const c = Math.cos(rot), sn = Math.sin(rot), m = new THREE.Matrix4(), pp = new THREE.Vector3();
+    const inside = im => (i => { im.getMatrixAt(i, m); pp.setFromMatrixPosition(m); const dx = pp.x - cx, dz = pp.z - cz;
+      return Math.abs(dx * c - dz * sn) < hx && Math.abs(dx * sn + dz * c) < hz; });
+    const drop = (ims) => { const lead = ims[0], test = inside(lead);
+      for (let i = lead.count - 1; i >= 0; i--) if (test(i)) { const last = lead.count - 1;
+        for (const im of ims) { im.getMatrixAt(last, m); im.setMatrixAt(i, m); if (im.instanceColor) { im.getColorAt(last, _cc); im.setColorAt(i, _cc); } im.count = last; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; } } };
+    drop([plants.grass]); drop([plants.stems, plants.heads]); };
+  const _cc = new THREE.Color();
   {
     const blades = [];
     for (let i = 0; i < 5; i++) {
@@ -6167,6 +6198,7 @@ life = (() => {
     }
     stems.count = heads.count = f;
     scene.add(stems, heads);
+    plants = { grass, stems, heads };
   }
 
   let hammockRig = null;                                    // the hammock's rocking rig (for lying in it, E)
@@ -7585,7 +7617,7 @@ life = (() => {
   for (const r of rings) r.m.visible = false;
   let swim = 0, swimVol = 0;
   const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
-  return { update, refreshShelters, setNight, setWeather, setMix, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R, car: carRig, truck: truckRig, carSound };   // snd: debug handle (window.__perf.life.snd)
+  return { update, refreshShelters, setNight, setWeather, setMix, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R, car: carRig, truck: truckRig, carSound, clearPlants };   // snd: debug handle (window.__perf.life.snd)
 })();
 
 // ---------- HAMMOCK (per user: interaction). First person: walk up to the hammock and press E (or tap the prompt) to lie
@@ -7821,6 +7853,7 @@ acts = (() => {
     treeSpots.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + 1.8) && !TRACK.near(x, z, 5) && !pond.depthAt(x, z)
     && !(x > AREA.x0 - 1.5 && x < AREA.x1 + 1.5 && z > AREA.z0 - 1.5 && z < AREA.z1 + 1.5)) || [-5.5, -11.5];
   const blanket = new THREE.Group(); blanket.position.set(BL[0], 0, BL[1]); blanket.rotation.y = 0.4; scene.add(blanket);
+  life.clearPlants(BL[0], BL[1], 0.95, 1.2, 0.4);                  // no grass growing through the mat (1.5 × 2.0 m + a margin)
   { const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
     x.fillStyle = '#b8342c'; x.fillRect(0, 0, 128, 128);
     for (let i = 0; i < 8; i++) { x.fillStyle = 'rgba(245,240,225,0.55)'; x.fillRect(i * 16 + 4, 0, 6, 128); x.fillRect(0, i * 16 + 4, 128, 6); }
@@ -8488,8 +8521,8 @@ renderer.setAnimationLoop(() => {
         // the orbit centre can't sink below the ground (clamping the MOVE by it stopped all descent — bug): re-seat
         // it where the view ray meets the ground, so the view direction is unchanged
         if (controls.target.y < 0) {
-          const t = _fwd.y < -0.05 ? -camera.position.y / _fwd.y : controls.minDistance;
-          controls.target.copy(camera.position).addScaledVector(_fwd, Math.max(t, controls.minDistance));
+          const t = _fwd.y < -0.05 ? -camera.position.y / _fwd.y : 1.5;   // re-seat the orbit point ahead of the camera, never ON it
+          controls.target.copy(camera.position).addScaledVector(_fwd, Math.max(t, 1.5));
           controls.target.y = Math.max(controls.target.y, 0);
         }
       }
