@@ -379,6 +379,7 @@ const fpControls = new PointerLockControls(camera, renderer.domElement);
 const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false };
 let fishing = null; // the pond's fishing spot (set up with the pond; E to fish)
 let hammock = null; // lying in the hammock (E, set up after camp life)
+let car = null;     // driving the G-Class (E at the driver's door)
 let life = null;    // camp life: grass, props, wildlife, fireflies, rain, sound (set up after the tents)
 let raining = false;
 // a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
@@ -389,7 +390,13 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) relea
 window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) { if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') releaseKeys(); return; }
   // E → fishing (sit down / cast / strike); moving or Esc stands you up again
-  if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } fishing?.onE(); hammock?.onE(); life?.deerOnE() || life?.rabbitOnE(); }
+  if (car?.active) {                                // driving: L lights, H horn, V view, E get out; WASD fall through to keys
+    if (!e.repeat && e.code === 'KeyL') car.act('lights');
+    if (!e.repeat && e.code === 'KeyH') car.act('horn');
+    if (!e.repeat && e.code === 'KeyV') car.act('view');
+    if (!e.repeat && e.code === 'KeyE') car.onE();
+  }
+  else if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } car?.onE() || (fishing?.onE(), hammock?.onE(), life?.deerOnE() || life?.rabbitOnE()); }
   if (fishing?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape'].includes(e.code)) { fishing.stop(); return; }
   if (hammock?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape', 'Space'].includes(e.code)) { hammock.stop(); return; }
   if (e.code === 'KeyW') keys.w = true;
@@ -407,7 +414,7 @@ window.addEventListener('keydown', e => {
     updateOS();
   }
   // Space → jump (first person mode only)
-  if (e.code === 'Space' && walking) {
+  if (e.code === 'Space' && walking && !car?.active) {
     e.preventDefault(); // stop page scroll + re-clicking the focused button
     if (!e.repeat && grounded && !inPond) { jumpVy = JUMP_V; grounded = false; } // no jumping while wading/swimming
   }
@@ -479,12 +486,13 @@ function exitWalk() {
 walkBtn.addEventListener('click', () => {
   if (fishing?.active) fishing.stop();       // (bug sweep) stand up from the fishing stool first, then switch modes
   if (hammock?.active) hammock.stop();
+  if (car?.active) return;                   // get out of the car first (E)
   walking ? exitWalk() : enterWalk();
 });
 // desktop: click the scene while walking → pointer lock for mouse look.
 // touch taps are excluded so on-screen controls keep working as before (AnyDesk).
 renderer.domElement.addEventListener('click', e => {
-  if (walking && !fpControls.isLocked && e.pointerType !== 'touch') fpControls.lock();
+  if (walking && !car?.active && !fpControls.isLocked && e.pointerType !== 'touch') fpControls.lock();
 });
 // walk-mode help lives in the bottom hint bar (#walkHint), not in the button label
 const walkHint = document.getElementById('walkHint');
@@ -595,6 +603,7 @@ lookZone.addEventListener('pointermove', e => {
   if (e.pointerId !== lookPid) return;
   const dx = e.clientX - lookLast.x, dy = e.clientY - lookLast.y, k = 3.2 / Math.min(innerWidth, innerHeight);
   lookLast = { x: e.clientX, y: e.clientY }; lookMoved += Math.abs(dx) + Math.abs(dy);
+  if (car?.active) { car.look(dx * 1.6, dy * 1.6); return; }      // driving: orbit the chase camera instead
   _lookEul.setFromQuaternion(camera.quaternion);
   _lookEul.y -= dx * k;
   _lookEul.x = Math.max(-1.45, Math.min(1.45, _lookEul.x - dy * k));
@@ -604,7 +613,7 @@ const lookEnd = e => {
   if (e.pointerId !== lookPid) return;
   lookPid = null;
   osLook.classList.remove('active'); osLook.style.left = osLook.style.top = '';
-  if (e.type === 'pointerup' && e.pointerType === 'mouse' && lookMoved < 6 && walking && !fpControls.isLocked) fpControls.lock();
+  if (e.type === 'pointerup' && e.pointerType === 'mouse' && lookMoved < 6 && walking && !car?.active && !fpControls.isLocked) fpControls.lock();
 };
 lookZone.addEventListener('pointerup', lookEnd);
 lookZone.addEventListener('pointercancel', lookEnd);
@@ -5688,7 +5697,7 @@ fishing = (() => {
   function onE() {
     if (!active) {
       // first person only (per user): walk up to the stool and press E
-      if (!walking || Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) > 2.5) return;
+      if (!walking || car?.active || Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) > 2.5) return;
       start(); return;
     }
     if (state === 'ready') cast();
@@ -5706,7 +5715,7 @@ fishing = (() => {
     const t = performance.now() * 0.001;
     if (!active) {
       // first-person prompt when you stand next to the stool
-      const near = walking && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) < 2.2;
+      const near = walking && !car?.active && Math.hypot(camera.position.x - seat.x, camera.position.z - seat.z) < 2.2;
       if (near) say(TOUCH ? '<b>Tap</b> to sit down and fish' : '<kbd>E</kbd> sit down and fish'); else if (hud.style.display !== 'none') hush();
       // idle: the bobber hangs a little below the rod tip on the rest
       const tip = tipWorld();
@@ -6048,45 +6057,159 @@ life = (() => {
     scene.add(shadowAll(g));
   }
 
-  // ===== parked SUV at the site edge (olive): body extruded from a side profile (raked windscreen, sloped hood),
-  //       flush glass, black cladding, wheels with rims, lights, roof rack =====
+  // ===== parked G-Class (per user: rebuilt from a photo of the new W465 G-Class in green) at the site edge. Local +z is
+  //       the front. A HOLLOW shell so you can sit in it (E, see `car` below): side panels with real wheel arches (front
+  //       fender / door / rear pieces, so the driver's door can swing), hood, floor, roof on A–D pillars, see-through
+  //       glass, and a cabin (dash with widescreen, wheel, seats, trims). Black arch flares, sills, rub strips, bumpers
+  //       with mesh inserts, slatted grille, round LED headlights in black pods, amber indicator "bullets" on the wings,
+  //       mirrors, ladder roof rack, 5-spoke wheels on chunky tyres, spare wheel on the side-hinged rear door.
+  //       Right-hand drive (driver on local −x). No badges. =====
+  let carRig = null;
   {
-    const g = new THREE.Group(), paint = new THREE.MeshStandardMaterial({ color: 0x5d6b54, roughness: 0.45, metalness: 0.35 });
-    const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), glass = new THREE.MeshStandardMaterial({ color: 0x18202a, roughness: 0.08, metalness: 0.7 });
-    const chrome = new THREE.MeshStandardMaterial({ color: 0xb8bcc0, roughness: 0.3, metalness: 0.9 });
-    const HW = 0.9;                                                    // half width of the body
-    // side profile in (z = along the car, y): rear bumper → roof → windscreen → hood → nose
-    const prof = [[-2.3, 0.36], [-2.28, 1.2], [-2.2, 1.86], [0.7, 1.9], [1.32, 1.22], [2.18, 1.06], [2.3, 0.86], [2.28, 0.4]];
-    const shape = new THREE.Shape(prof.map(([z, y]) => new THREE.Vector2(z, y)));
-    const bodyGeo = new THREE.ExtrudeGeometry(shape, { depth: 2 * HW - 0.12, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 3 });
-    bodyGeo.translate(0, 0, -(HW - 0.06)); bodyGeo.rotateY(-Math.PI / 2);   // shape x → world z, extrusion → world x
-    g.add(new THREE.Mesh(bodyGeo, paint));
-    const flat = (pts, mat) => { const geo = new THREE.BufferGeometry().setFromPoints(pts); geo.setIndex([0, 1, 2, 0, 2, 3]); geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); m.material.side = THREE.DoubleSide; g.add(m); return m; };
-    // glass: side windows (both sides), windscreen (in the raked plane, 6 mm proud), rear window
+    const g = new THREE.Group();
+    const paint = new THREE.MeshStandardMaterial({ color: 0x6b8a2c, roughness: 0.38, metalness: 0.3, side: THREE.DoubleSide });
+    const black = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.75 }), satin = new THREE.MeshStandardMaterial({ color: 0x232427, roughness: 0.45, metalness: 0.4 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x2b2c2f, roughness: 0.85 }), seat = new THREE.MeshStandardMaterial({ color: 0x1f1d1c, roughness: 0.7 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0x0f1518, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false });   // tinted, as in the photo
+    const silver = new THREE.MeshStandardMaterial({ color: 0xd9dcdf, roughness: 0.25, metalness: 0.7 }), rimDark = new THREE.MeshStandardMaterial({ color: 0x8d9196, roughness: 0.35, metalness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
+    const lensMat = new THREE.MeshStandardMaterial({ color: 0xdfe6ea, roughness: 0.15, metalness: 0.2, emissive: 0xfff4dd, emissiveIntensity: 0 });
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0x8e1414, roughness: 0.35, emissive: 0xff2010, emissiveIntensity: 0 });
+    const amber = new THREE.MeshStandardMaterial({ color: 0xf08a12, roughness: 0.3, emissive: 0x6a3000, emissiveIntensity: 0.25 });
+    const screenMat = new THREE.MeshStandardMaterial({ color: 0x0c1218, roughness: 0.2, emissive: 0x16324a, emissiveIntensity: 0.25 });
+    const wellMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.95, side: THREE.DoubleSide });
+    const HW = 0.93, ZF = 2.25, ZR = -2.25, BELT = 1.24, BOT = 0.5, ROOF = 1.95, TR = 0.39;
+    const AX = [1.42, -1.47], AR = 0.47;                                 // axles (z) and arch radius
+    const box = (w, h, d, mat, x, y, z, parent = g, r = 0.012) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), mat); m.position.set(x, y, z); parent.add(m); return m; };
+    // side panel piece between z0..z1: bottom follows the wheel arches, top = beltline (cabin) / hood line (front)
+    const bottomY = z => { for (const a of AX) if (Math.abs(z - a) < AR) return TR + Math.sqrt(AR * AR - (z - a) ** 2); return BOT; };
+    const topY = z => z > 0.62 ? 1.22 - 0.02 * (z - 0.62) / (ZF - 0.62) : BELT;
+    const sidePiece = (z0, z1, sx, mat = paint) => {
+      const pts = [];
+      for (let i = 0; i <= 48; i++) { const z = z0 + (z1 - z0) * i / 48; pts.push(new THREE.Vector2(z, bottomY(z))); }
+      for (let i = 0; i <= 6; i++) { const z = z1 + (z0 - z1) * i / 6; pts.push(new THREE.Vector2(z, topY(z))); }
+      const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: 0.045, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 2, curveSegments: 4 });
+      geo.rotateY(-Math.PI / 2);                                         // shape x → world z, extrusion → −x
+      geo.translate(sx > 0 ? HW : -HW + 0.045, 0, 0);
+      return new THREE.Mesh(geo, mat);
+    };
+    const DOOR = [-0.52, 0.6];                                           // front door span (z)
+    const doorGlassGeo = (() => { const sh = new THREE.Shape([[DOOR[0] + 0.05, 1.27], [0.6, 1.27], [0.43, 1.86], [DOOR[0] + 0.05, 1.86]].map(([z, y]) => new THREE.Vector2(z, y)));
+      const geo = new THREE.ShapeGeometry(sh); geo.rotateY(-Math.PI / 2); return geo; })();   // shape x → world z (plane at x = 0)
     for (const sx of [-1, 1]) {
-      const x = sx * (HW + 0.004), ws = new THREE.Shape([[-2.1, 1.26], [-2.04, 1.76], [0.66, 1.79], [1.18, 1.26]].map(([z, y]) => new THREE.Vector2(z, y)));
-      const wg = new THREE.ShapeGeometry(ws); wg.rotateY(-Math.PI / 2); wg.translate(x, 0, 0);
-      const w = new THREE.Mesh(wg, glass); w.material.side = THREE.DoubleSide; g.add(w);
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.5, 0.08), black); pillar.position.set(x + sx * 0.003, 1.52, -0.55); g.add(pillar); // B-pillar
+      g.add(sidePiece(DOOR[1] + 0.012, ZF, sx));                         // front wing
+      g.add(sidePiece(ZR, DOOR[0] - 0.012, sx));                         // rear doors + quarter
+      if (sx > 0) g.add(sidePiece(DOOR[0], DOOR[1], sx));                // passenger front door (fixed)
     }
-    const wsN = new THREE.Vector3(0, 0.62 - 0.0, 0).set(0, 0.68, 0.62).normalize().multiplyScalar(0.006);   // rake normal (outward)
-    flat([V(-0.8, 1.86, 0.74), V(0.8, 1.86, 0.74), V(0.8, 1.27, 1.29), V(-0.8, 1.27, 1.29)].map(v => v.add(wsN)), glass);
-    flat([V(0.78, 1.26, -2.283), V(-0.78, 1.26, -2.283), V(-0.76, 1.76, -2.222), V(0.76, 1.76, -2.222)], glass); // 1 cm off the sloped tailgate
-    const box = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.3), mat); m.position.set(x, y, z); g.add(m); return m; };
-    box(2 * HW + 0.06, 0.22, 4.66, black, 0, 0.47, 0);               // lower cladding / bumpers
-    for (const sx of [-0.65, 0.65]) box(0.05, 0.05, 2.5, black, sx, 1.99, -0.75);                  // roof rails
-    for (const z of [-1.6, 0.1]) box(1.5, 0.04, 0.05, black, 0, 2.02, z);                          // cross bars
-    for (const [x, z] of [[-0.86, 1.48], [0.86, 1.48], [-0.86, -1.42], [0.86, -1.42]]) {
-      const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.28, 24), black); tyre.rotation.z = Math.PI / 2; tyre.position.set(x, 0.38, z); g.add(tyre);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.29, 12), chrome); rim.rotation.z = Math.PI / 2; rim.position.set(x, 0.38, z); g.add(rim);
+    // driver's door (local −x side): its own panel + window frame + glass, hinged at its front edge
+    const doorPivot = new THREE.Group(); doorPivot.position.set(-HW, 0, DOOR[1]); doorPivot.userData.dynamic = true; g.add(doorPivot);
+    { const d = sidePiece(DOOR[0], DOOR[1], -1); d.position.set(HW, 0, -DOOR[1]); doorPivot.add(d);
+      const inner = box(0.03, 0.62, 1.06, trim, HW - 0.06, 0.88, -0.06 - DOOR[1] + 0.06, doorPivot); inner.position.set(0.05, 0.88, (DOOR[0] + DOOR[1]) / 2 - DOOR[1]);
+      const fr = (w, h, d, x, y, z) => box(w, h, d, paint, x, y, z, doorPivot, 0.006);
+      fr(0.04, 0.05, 1.0, 0.02, 1.885, (DOOR[0] + 0.02 + 0.42) / 2 - DOOR[1]);                         // frame top
+      fr(0.04, 0.66, 0.05, 0.02, 1.57, DOOR[0] + 0.03 - DOOR[1]);                                     // frame rear
+      const gl = new THREE.Mesh(doorGlassGeo, glass); gl.position.set(0.025, 0, -DOOR[1]); doorPivot.add(gl);
+      box(0.03, 0.025, 0.14, black, -0.012, 1.12, DOOR[0] + 0.12 - DOOR[1], doorPivot);                // handle
+      box(0.012, 0.035, 1.0, black, -0.004, 1.0, (DOOR[0] + DOOR[1]) / 2 - DOOR[1], doorPivot);        // rub strip
     }
-    for (const sx of [-0.62, 0.62]) {
-      box(0.34, 0.11, 0.05, new THREE.MeshStandardMaterial({ color: 0xf2f2e8, roughness: 0.2 }), sx, 0.93, 2.3);   // headlights
-      box(0.08, 0.32, 0.05, new THREE.MeshStandardMaterial({ color: 0x9a1b1b, roughness: 0.4 }), sx * 1.3, 1.15, -2.3); // tail lights
+    // hood, grille panel, floor, rear panel, wheel wells
+    box(2 * HW - 0.09, 0.2, ZF - 0.62, paint, 0, 1.115, (ZF + 0.62) / 2, g, 0.03);
+    box(2 * HW - 0.1, 0.42, 0.04, black, 0, 0.83, ZF - 0.02);
+    for (let i = 0; i < 4; i++) box(0.98, 0.028, 0.03, satin, 0, 0.78 + i * 0.085, ZF + 0.012);         // grille slats
+    box(2 * HW - 0.08, 0.05, ZF - ZR - 0.1, trim, 0, BOT + 0.02, 0);                                    // floor
+    box(2 * HW - 0.06, BELT - BOT - 0.04, 0.045, paint, 0, (BELT + BOT) / 2, ZR + 0.022);              // rear door (lower)
+    for (const a of AX) for (const sx of [-1, 1]) {                                                    // wheel wells (hide the cabin through the arches)
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(AR - 0.01, AR - 0.01, 0.34, 18, 1, true, 0, Math.PI), wellMat);   // upper half
+      w.rotation.z = Math.PI / 2; w.position.set(sx * 0.77, TR, a); g.add(w);
+      const cap = new THREE.Mesh(new THREE.CircleGeometry(AR - 0.01, 18, 0, Math.PI), wellMat); cap.rotation.y = sx * Math.PI / 2; cap.position.set(sx * 0.6, TR, a); g.add(cap);
     }
-    box(0.9, 0.16, 0.04, black, 0, 0.72, 2.32);                       // grille
+    // greenhouse: roof, pillars (A raked, B, C, D), windscreen, side + rear glass
+    box(2 * HW - 0.1, 0.07, 2.66, paint, 0, ROOF - 0.035, -0.91, g, 0.03);
+    const pillar = (sx, z, w) => box(0.05, ROOF - BELT, w, paint, sx * (HW - 0.045), (ROOF + BELT) / 2, z, g, 0.008);
+    for (const sx of [-1, 1]) {
+      pillar(sx, -0.56, 0.08); pillar(sx, -1.56, 0.09); pillar(sx, ZR + 0.06, 0.12);                   // B, C, D
+      const a = box(0.06, 0.72, 0.07, paint, sx * (HW - 0.05), (BELT + ROOF) / 2, 0.52, g, 0.008); a.rotation.x = -0.29;   // A, raked
+      for (const [z0, z1] of [[-0.6, -1.52], [-1.61, ZR + 0.12]]) {                                   // rear door + quarter glass
+        const gl = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(z1 - z0) - 0.02, 0.6), glass); gl.rotation.y = Math.PI / 2; gl.position.set(sx * (HW - 0.03), 1.57, (z0 + z1) / 2); g.add(gl);
+      }
+    }
+    { const gl = new THREE.Mesh(doorGlassGeo, glass); gl.position.x = HW - 0.025; g.add(gl); }        // passenger door glass
+    { const ws = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.2, 0.7), glass); ws.position.set(0, (BELT + ROOF) / 2 + 0.01, 0.53); ws.rotation.x = -0.29; g.add(ws); }  // windscreen
+    box(2 * HW - 0.1, 0.06, 0.08, paint, 0, ROOF - 0.04, 0.43, g, 0.01);                               // header
+    { const rg = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.26, 0.58), glass); rg.position.set(0, 1.58, ZR + 0.02); g.add(rg); }   // rear window
+    // cabin
+    box(2 * HW - 0.12, 0.26, 0.42, trim, 0, 1.1, 0.42, g, 0.04);                                         // dashboard
+    { const scr = box(0.78, 0.1, 0.025, screenMat, -0.2, 1.255, 0.25, g, 0.01); scr.rotation.x = -0.3; } // widescreen, low on the dash
+    const wheelG = new THREE.Group(); wheelG.position.set(-0.42, 1.2, 0.16); wheelG.rotation.x = 0.43;   // face tilted up toward the driver g.add(wheelG);
+    wheelG.add(Object.assign(new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.018, 8, 28), black), {}));
+    { const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.05, 16), black); hub.rotation.x = Math.PI / 2; wheelG.add(hub);
+      for (const a of [0, 2.1, 4.2]) { const sp = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.022, 0.012), black); sp.position.set(Math.cos(a) * 0.09, Math.sin(a) * 0.09, 0); sp.rotation.z = a; wheelG.add(sp); } }
+    box(0.22, 0.24, 0.75, trim, 0, 0.74, -0.08, g, 0.04);                                                  // centre console
+    for (const sx of [-1, 1]) {
+      box(0.52, 0.13, 0.52, seat, sx * 0.42, 0.86, -0.28, g, 0.05);                                       // front cushions
+      const back = box(0.52, 0.7, 0.13, seat, sx * 0.42, 1.25, -0.6, g, 0.05); back.rotation.x = -0.18;
+      box(0.26, 0.17, 0.1, seat, sx * 0.42, 1.69, -0.7, g, 0.04);                                          // headrests
+      { const z0 = ZR + 0.13, z1 = sx < 0 ? DOOR[0] - 0.02 : 0.55;                                        // inner trims (driver's door has its own)
+        box(0.03, 0.62, z1 - z0, trim, sx * (HW - 0.065), 0.88, (z0 + z1) / 2); }
+    }
+    box(1.56, 0.13, 0.5, seat, 0, 0.86, -1.36, g, 0.05);                                                    // rear bench
+    { const b = box(1.56, 0.62, 0.13, seat, 0, 1.22, -1.68, g, 0.05); b.rotation.x = -0.14; }
+    // black bits: flares, sills, rub strips, bumpers, handles, mirrors
+    for (const sx of [-1, 1]) {
+      for (const a of AX) {
+        const s = new THREE.Shape(); s.absarc(0, 0, AR + 0.07, 0.12, Math.PI - 0.12, false); s.absarc(0, 0, AR + 0.005, Math.PI - 0.12, 0.12, true);
+        const fg = new THREE.ExtrudeGeometry(s, { depth: 0.075, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.01, bevelSegments: 2, curveSegments: 20 });
+        fg.rotateY(sx > 0 ? Math.PI / 2 : -Math.PI / 2); const f = new THREE.Mesh(fg, black); f.position.set(sx * (HW - 0.02), TR, a); g.add(f);
+      }
+      box(0.09, 0.07, 1.92, black, sx * (HW + 0.02), BOT + 0.02, -0.03);                                  // sill / step
+      box(0.012, 0.035, 0.95, black, sx * (HW + 0.006), 1.0, -1.02);                                      // rub strip, rear door
+      if (sx > 0) box(0.012, 0.035, 1.0, black, HW + 0.006, 1.0, 0.04);                                   // rub strip, passenger door
+      box(0.012, 0.03, 1.2, black, sx * (HW + 0.006), 1.15, 1.45);                                        // wing strip
+      for (const z of (sx > 0 ? [-0.4, -1.42] : [-1.42])) box(0.03, 0.025, 0.14, black, sx * (HW + 0.012), 1.12, z);   // handles
+      box(0.04, 0.03, 0.12, black, sx * (HW + 0.03), 1.38, 0.5);                                          // mirror arm
+      box(0.08, 0.15, 0.22, black, sx * (HW + 0.1), 1.42, 0.47, g, 0.03);                                // mirror head
+      const ind = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.06, 4, 8), amber); ind.rotation.x = Math.PI / 2; ind.position.set(sx * 0.8, 1.235, ZF - 0.18); g.add(ind);   // indicator bullet
+    }
+    box(2 * HW + 0.08, 0.3, 0.28, black, 0, 0.64, ZF + 0.07, g, 0.04);                                     // front bumper
+    for (const sx of [-1, 1]) box(0.36, 0.14, 0.03, satin, sx * 0.56, 0.65, ZF + 0.215);                   // mesh inserts
+    box(2 * HW + 0.06, 0.26, 0.2, black, 0, 0.62, ZR - 0.06, g, 0.04);                                     // rear bumper
+    // headlights: black pods, round lenses with an LED ring; tail lights
+    for (const sx of [-1, 1]) {
+      box(0.34, 0.33, 0.06, black, sx * 0.68, 0.98, ZF + 0.005, g, 0.04);
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.115, 0.03, 28), lensMat); lens.rotation.x = Math.PI / 2; lens.position.set(sx * 0.68, 0.98, ZF + 0.035); g.add(lens);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.009, 6, 28), lensMat); ring.position.set(sx * 0.68, 0.98, ZF + 0.05); g.add(ring);
+      box(0.12, 0.32, 0.03, tailMat, sx * 0.83, 1.0, ZR - 0.012, g, 0.01);
+    }
+    // roof rack (black ladder)
+    for (const sx of [-1, 1]) { box(0.04, 0.04, 2.3, black, sx * 0.8, ROOF + 0.09, -0.86); for (const z of [0.2, -0.6, -1.3, -1.95]) box(0.03, 0.08, 0.03, black, sx * 0.8, ROOF + 0.04, z); }
+    for (let i = 0; i < 9; i++) box(1.6, 0.025, 0.03, black, 0, ROOF + 0.09, 0.27 - i * 0.28);
+    // wheels: lathed tyre with rounded shoulders + 5-spoke silver rim; spare on the rear door
+    const tyreGeo = new THREE.LatheGeometry([[0.25, -0.13], [0.34, -0.135], [0.38, -0.12], [TR, -0.08], [TR, 0.08], [0.38, 0.12], [0.34, 0.135], [0.25, 0.13]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
+    const wheels = [];
+    const wheel = (parent, x, y, z, rotY) => {
+      const w = new THREE.Group(); w.position.set(x, y, z); w.rotation.set(0, rotY, 0, 'YXZ'); parent.add(w);
+      const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; w.add(t);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.24, 24, 1, true), satin); barrel.rotation.z = Math.PI / 2; w.add(barrel);
+      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.02, 24), rimDark); face.rotation.z = Math.PI / 2; face.position.x = 0.06; w.add(face);
+      for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2, sp = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.065), silver);
+        sp.position.set(0.085, Math.cos(a) * 0.12, Math.sin(a) * 0.12); sp.rotation.x = a; w.add(sp); }
+      const rimR = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.02, 6, 28), silver); rimR.rotation.y = Math.PI / 2; rimR.position.x = 0.085; w.add(rimR);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.04, 16), silver); cap.rotation.z = Math.PI / 2; cap.position.x = 0.1; w.add(cap);
+      return w;
+    };
+    for (const a of AX) for (const sx of [-1, 1]) { const w = wheel(g, sx * 0.8, TR, a, sx > 0 ? 0 : Math.PI); w.userData.dynamic = true; wheels.push({ w, front: a > 0, sx, base: w.rotation.y }); }
+    { const sp = new THREE.Group(); sp.position.set(0.05, 1.16, ZR - 0.2); sp.rotation.y = -Math.PI / 2; g.add(sp);   // spare: tyre + black cover
+      const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; sp.add(t);
+      const cov = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 28), black); cov.rotation.z = Math.PI / 2; cov.position.x = 0.02; sp.add(cov);
+      box(0.14, 0.12, 0.1, black, 0.05, 1.16, ZR - 0.08); }
+    // headlight beams (off until switched on in the car — L)
+    const beams = [-1, 1].map(sx => {
+      const l = new THREE.SpotLight(0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(sx * 0.68, 0.98, ZF + 0.1);
+      l.target.position.set(sx * 0.9, 0, ZF + 14); g.add(l, l.target); l.visible = false; return l;
+    });
     g.position.set(SUV_AT[0], 0, SUV_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
+    g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
+    carRig = { g, doorPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3) };
   }
 
   // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
@@ -6388,6 +6511,16 @@ life = (() => {
     water: buf(4, (d, n) => { let lp = 0, lp2 = 0;
       for (let i = 0; i < n; i++) { const t = (i / SR) % (4 / 3), env = t < 0.3 ? (t / 0.3) ** 2 : Math.exp(-(t - 0.3) / 0.35);
         lp += 0.08 * ((Math.random() * 2 - 1) - lp); lp2 += 0.3 * (lp - lp2); d[i] = (lp * 0.7 + (lp - lp2) * 0.6) * env; } }),
+    // the G-Class: a 1 s idle loop (diesel-ish firing pulses on a 42 Hz fundamental, a little rough), a two-tone horn,
+    // and a door clunk. The engine's playback rate follows the road speed.
+    engine: buf(1, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR, f = 42;
+      const pulse = Math.pow(0.5 + 0.5 * Math.sin(2 * Math.PI * f * 2 * t), 6);
+      lp += 0.25 * ((Math.random() * 2 - 1) - lp);
+      d[i] = 0.5 * Math.sin(2 * Math.PI * f * t) + 0.3 * Math.sin(2 * Math.PI * f * 2 * t + 1) + 0.6 * pulse * (0.6 + 0.4 * lp) + 0.15 * lp; } }),
+    horn: buf(0.55, (d, n) => { for (let i = 0; i < n; i++) { const t = i / SR, env = Math.min(1, t / 0.02) * Math.min(1, (0.55 - t) / 0.05);
+      const sq = f => Math.tanh(4 * Math.sin(2 * Math.PI * f * t)); d[i] = env * (0.5 * sq(415) + 0.5 * sq(523)); } }),
+    door: buf(0.3, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR; lp += 0.12 * ((Math.random() * 2 - 1) - lp);
+      d[i] = Math.exp(-t / 0.035) * (0.8 * Math.sin(2 * Math.PI * 70 * t) + 1.5 * lp); } }),
     // the stag's alarm snort when it bolts: a short, breathy low-passed burst
     snort: buf(0.6, (d, n) => { let lp = 0; for (let i = 0; i < n; i++) { const t = i / SR, env = t < 0.02 ? t / 0.02 : Math.exp(-(t - 0.02) / 0.09);
       lp += 0.18 * ((Math.random() * 2 - 1) - lp); d[i] = lp * env * (0.7 + 0.3 * Math.sin(2 * Math.PI * 90 * t)); } }),
@@ -6404,6 +6537,15 @@ life = (() => {
     water: amb(bufs.water),
     birds: [[-9.5, 6.5], [9.5, -6.5], HAMMOCK.a].map(([x, z], i) => pos(bufs.birds[i], V(x, 4.5, z), 9)),
     snort: pos(bufs.snort, V(0, 1.2, 0.7), 6, deer.g),
+    engine: pos(bufs.engine, V(0, 0.9, 1.4), 4, carRig.g), horn: pos(bufs.horn, V(0, 0.9, 2.1), 8, carRig.g), door: pos(bufs.door, V(-0.95, 1.0, 0.1), 4, carRig.g),
+  };
+  for (const k of ['horn', 'door']) snd[k].setLoop(false);
+  const carSound = {
+    engine(on, rate = 1) { if (!started) return; const e = snd.engine;
+      if (on && !e.isPlaying) { e.setVolume(0.35); e.play(); } else if (!on && e.isPlaying) e.stop();
+      if (on) { e.setPlaybackRate(rate); e.setVolume(0.25 + 0.2 * Math.min(1, rate - 0.8)); } },
+    horn() { if (!started || !soundOn) return; const h = snd.horn; h.setVolume(0.7); if (h.isPlaying) h.stop(); h.play(); },
+    door() { if (!started || !soundOn) return; const h = snd.door; h.setVolume(0.8); if (h.isPlaying) h.stop(); h.play(); },
   };
   snd.snort.setLoop(false);
   const snort = () => { if (!started || !soundOn) return; snd.snort.setVolume(0.6); if (snd.snort.isPlaying) snd.snort.stop(); snd.snort.play(); };
@@ -6461,7 +6603,7 @@ life = (() => {
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.004, 0.025, 5), new THREE.MeshStandardMaterial({ color: 0x4a3420 })); stem.position.y = 0.04; a.add(stem);
     return a;
   }
-  const deerPlayer = () => walking && !fishing?.active && !hammock?.active;
+  const deerPlayer = () => walking && !fishing?.active && !hammock?.active && !car?.active;
   // (not `inPond`: inside life that name is the grass-placement helper, which shadows the walk-mode flag)
   const canFeed = () => deer.mode === 'alert' && deer.calm > 2 && deerPlayer() && !pond.depthAt(camera.position.x, camera.position.z) &&
     Math.hypot(camera.position.x - deer.g.position.x, camera.position.z - deer.g.position.z) < 4;
@@ -6597,7 +6739,17 @@ life = (() => {
     for (const sx of [-1, 1]) part(pose, fur, sx * 0.045, 0.08, 0.0, 0.05, 0.075, 0.085);   // haunches
     part(pose, pale, 0, 0.09, 0.15, 0.055, 0.06, 0.05);                         // chest
     part(pose, white, 0, 0.1, -0.06, 0.028, 0.028, 0.024);                      // scut (tail)
-    for (const sx of [-1, 1]) { part(pose, fur, sx * 0.05, 0.016, 0.03, 0.024, 0.016, 0.07); part(pose, fur, sx * 0.028, 0.02, 0.19, 0.016, 0.02, 0.025); } // hind feet, front paws
+    for (const sx of [-1, 1]) part(pose, fur, sx * 0.05, 0.016, 0.03, 0.024, 0.016, 0.07);               // long hind feet
+    // forelegs (per user: the paws were floating balls): a short leg out of the chest, hinged at the shoulder, down to a
+    // flat oval paw on the ground. The hinge counter-rotates the body's pitch, so the legs hang straight when it sits up
+    // and reach forward when it leans down to eat.
+    const foreLeg = new THREE.CapsuleGeometry(0.0115, 0.045, 4, 8);
+    const fore = [-1, 1].map(sx => {
+      const sh = new THREE.Group(); sh.position.set(sx * 0.026, 0.075, 0.16); pose.add(sh);
+      const leg = new THREE.Mesh(foreLeg, fur); leg.position.y = -0.032; sh.add(leg);
+      part(sh, pale, 0, -0.062, 0.01, 0.014, 0.009, 0.022);
+      return sh;
+    });
     const head = new THREE.Group(); head.position.set(0, 0.185, 0.18); pose.add(head);
     part(head, fur, 0, 0, 0.02, 0.05, 0.05, 0.065);
     part(head, pale, 0, -0.02, 0.06, 0.03, 0.022, 0.03);                        // muzzle
@@ -6612,7 +6764,7 @@ life = (() => {
     const shineMat = new THREE.SpriteMaterial({ map: makeSunTexture(64), color: 0xff6a4a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
     for (const sx of [-1, 1]) { const sp = new THREE.Sprite(shineMat); sp.scale.setScalar(0.05); sp.position.set(sx * 0.04, 0.014, 0.052); head.add(sp); }
     r.position.set(HOME[0], 0, HOME[1]); scene.add(r);
-    const R = { r, pose, head, ears, mode: 'idle', heading: Math.random() * 6.28, calm: 0, ps: 0, last: V(0, 0, 0), target: V(0, 0, 0),
+    const R = { r, pose, head, ears, fore, mode: 'idle', heading: Math.random() * 6.28, calm: 0, ps: 0, last: V(0, 0, 0), target: V(0, 0, 0),
       hop: 1, hopFrom: V(0, 0, 0), hopTo: V(0, 0, 0), hopDur: 0.3, next: 2, carrot: null, eat: 0, fed: 0, tameUntil: 0, twitch: 0, sit: 0 };
     // a hop turns the body during its first half (per user: it used to snap round before each hop)
     const startHop = (to, dur, face) => { R.hopFrom.copy(r.position); R.hopTo.copy(to); R.hopTo.y = 0; R.hop = 0; R.hopDur = dur;
@@ -6652,7 +6804,7 @@ life = (() => {
       const c = R.carrot = makeCarrot(); c.position.copy(camera.position).addScaledVector(_dv, 0.6); c.position.y = 0.022;
       c.rotation.y = Math.random() * 6.28; scene.add(c);
       const dx = c.position.x - r.position.x, dz = c.position.z - r.position.z, L = Math.hypot(dx, dz) || 1;
-      R.target.set(c.position.x - dx / L * 0.17, 0, c.position.z - dz / L * 0.17);   // crouched, its mouth is 0.17 m ahead
+      R.target.set(c.position.x - dx / L * 0.15, 0, c.position.z - dz / L * 0.15);   // head lowered, its mouth is 0.15 m ahead (measured)
       R.mode = 'approach'; hush();
       return true;
     }
@@ -6725,10 +6877,13 @@ life = (() => {
       }
       // pose: sit up (front rises), ears, nibbling, twitching
       R.sit += (sitUp - R.sit) * Math.min(1, dt * 6);
-      // eating: front end lowered (pose +0.35) and head down (0.65) so the mouth is on the carrot, nibbling
+      // eating: a slight lean (pose +0.1 — more sank the chest into the ground) and the head lowered + dropped forward
+      // (1.1 rad, −4.5 cm, +3 cm) so the mouth is on the carrot, nibbling
       R.crouch = (R.crouch || 0) + ((nibble === 2 ? 1 : 0) - (R.crouch || 0)) * Math.min(1, dt * 6);
-      pose.rotation.x = -0.55 * R.sit + 0.35 * R.crouch - (hopping ? 0.25 * Math.sin(Math.PI * R.hop) : 0);
-      head.rotation.x = 0.45 * R.sit + 0.65 * R.crouch + (nibble && !hopping ? (nibble === 2 ? 0 : 0.25) + Math.sin(t * 13) * (nibble === 2 ? 0.07 : 0.05) : 0);
+      pose.rotation.x = -0.55 * R.sit + 0.1 * R.crouch - (hopping ? 0.25 * Math.sin(Math.PI * R.hop) : 0);
+      head.position.set(0, 0.185 - 0.045 * R.crouch, 0.18 + 0.03 * R.crouch);
+      head.rotation.x = 0.45 * R.sit + 1.1 * R.crouch + (nibble && !hopping ? (nibble === 2 ? 0 : 0.25) + Math.sin(t * 13) * (nibble === 2 ? 0.07 : 0.05) : 0);
+      for (const f of fore) f.rotation.x = -pose.rotation.x - 0.8 * R.crouch;   // legs hang plumb; reach forward when eating
       if (t > R.twitch) { R.twitch = t + rnd(0.8, 3); ears[Math.random() * 2 | 0].userData.flick = 1; }
       ears.forEach((e, i) => { e.userData.flick = Math.max(0, (e.userData.flick || 0) - dt * 5);
         e.rotation.set(-0.9 + 0.75 * earsUp + 0.3 * Math.sin(Math.PI * e.userData.flick), 0, (i ? -1 : 1) * (0.12 + 0.1 * (1 - earsUp))); });
@@ -6812,7 +6967,7 @@ life = (() => {
   for (const r of rings) r.m.visible = false;
   let swim = 0, swimVol = 0;
   const setSwim = v => { swim = v; };                          // 0 … 1: how hard you're moving in the pond (main loop)
-  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R };   // snd: debug handle (window.__perf.life.snd)
+  return { update, refreshShelters, setNight, setWeather, setSound, setSwim, snd, hammock: hammockRig, deerOnE, deer, rabbitOnE: rabbit.onE, rabbit: rabbit.R, car: carRig, carSound };   // snd: debug handle (window.__perf.life.snd)
 })();
 
 // ---------- HAMMOCK (per user: interaction). First person: walk up to the hammock and press E (or tap the prompt) to lie
@@ -6827,7 +6982,7 @@ hammock = (() => {
   const IN = TOUCH ? 'Lying in the hammock · <b>✕ Stand up</b> to get out' : 'Lying in the hammock · <kbd>E</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> stand up';
   const _p = new THREE.Vector3();
   let active = false, back = null;
-  const near = () => walking && Math.hypot(camera.position.x - rig.mid.x, camera.position.z - rig.mid.z) < 2.0;
+  const near = () => walking && !car?.active && Math.hypot(camera.position.x - rig.mid.x, camera.position.z - rig.mid.z) < 2.0;
   function start() {
     if (active) return;
     active = true; rig.occupied = true; campers.leaveHammock?.();
@@ -6851,6 +7006,144 @@ hammock = (() => {
     else if (hud.style.display !== 'none') hush();
   }
   return { update, onE, start, stop, get active() { return active; } };
+})();
+
+// ---------- DRIVING THE G-CLASS (per user: interaction, "can drive around? 3rd person view"). First person: walk to the
+// driver's door (right-hand drive, local −x) and press E (or tap): the door swings open with a clunk and you're in.
+// W/S throttle / brake & reverse, A/D steer, Space handbrake, L headlights, H horn, V chase ↔ driver's-seat view, E get
+// out (when nearly stopped). Touch: left stick drives, drag the right half to orbit the camera, buttons in the pill.
+// Simple bicycle-model physics (front-wheel steering, wheelbase 2.89 m, ~45 km/h top, 15 km/h reverse); the body
+// bumps off tents / props (their bounding boxes), tree trunks, the pond and the edge of the world. Chase camera trails
+// behind and can be orbited; it swings back behind the car once you're moving. =====
+car = (() => {
+  const rig = life.car, g = rig.g, snd = life.carSound, hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
+  const TOUCH = matchMedia('(pointer: coarse)').matches, V3 = THREE.Vector3;
+  const WB = 2.89, MAXF = 12.5, MAXR = 4.2, _v = new V3(), _w = new V3(), _q = new THREE.Quaternion();
+  let active = false, view = 'chase', speed = 0, steer = 0, heading = g.rotation.y, lightsOn = false, door = 0, doorWant = 0;
+  let camYaw = 0, camPitch = 0.28, dragging = false, handbrake = false, obstacles = null, pending = null, brakeGlow = 0;
+  const local = (x, y, z, out = new V3()) => out.set(x, y, z).applyMatrix4(g.matrixWorld);
+  const doorSpot = () => local(-1.55, 0, 0.1);
+  const near = () => walking && !fishing?.active && !hammock?.active && !active && doorSpot().distanceTo(_w.set(camera.position.x, 0, camera.position.z)) < 1.6;
+  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'car'; };
+  const hush = () => { if (hud.dataset.owner === 'car') { hud.style.display = 'none'; hud.dataset.owner = ''; } };
+  const IN = () => (TOUCH ? '' : '<kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Space</kbd> brake · <kbd>V</kbd> view · <kbd>E</kbd> get out · ')
+    + '<button data-act="lights">💡 Lights</button> <button data-act="horn">📯 Horn</button> <button data-act="view">🎥 View</button>';
+  function buildObstacles() {                       // static scene parts' boxes (tents, props…), tree trunks
+    obstacles = { boxes: [], trees: [] };
+    const b = new THREE.Box3();
+    for (const o of scene.children) {
+      if (o === g || o.isLight || o.isInstancedMesh || !o.visible || o.userData.dynamic) continue;
+      b.setFromObject(o); if (b.isEmpty()) continue;
+      const sx = b.max.x - b.min.x, sz = b.max.z - b.min.z, h = b.max.y - Math.max(0, b.min.y);
+      if (sx > 20 || sz > 20 || h < 0.3 || b.min.y > 1.8) continue;     // ground, grass, rugs, the pond surface, things overhead
+      obstacles.boxes.push([b.min.x, b.max.x, b.min.z, b.max.z]);
+    }
+    for (const [x, z, r] of treeSpots) if (r < 3 && Math.hypot(x - SUV_AT[0], z - SUV_AT[1]) > 0.5 && Math.hypot(x - DEER_AT[0], z - DEER_AT[1]) > 0.5) obstacles.trees.push([x, z]);
+  }
+  function blocked(px, pz, hd) {                    // three circles along the car (r 1.0) vs boxes, trunks, pond, world edge
+    const sn = Math.sin(hd), cs = Math.cos(hd);
+    for (const off of [-1.45, 0, 1.45]) {
+      const cx = px + sn * off, cz = pz + cs * off, R = 1.0;
+      if (Math.hypot(cx, cz) > 38) return true;
+      if (pond.depthAt(cx, cz) || pond.depthAt(cx + cs * 0.9, cz - sn * 0.9) || pond.depthAt(cx - cs * 0.9, cz + sn * 0.9)) return true;
+      for (const [x, z] of obstacles.trees) if (Math.hypot(cx - x, cz - z) < R + 0.4) return true;
+      for (const [x0, x1, z0, z1] of obstacles.boxes) { const dx = cx - Math.max(x0, Math.min(cx, x1)), dz = cz - Math.max(z0, Math.min(cz, z1)); if (dx * dx + dz * dz < R * R) return true; }
+    }
+    return false;
+  }
+  function setLights(on) {
+    lightsOn = on; for (const b of rig.beams) { b.visible = on; b.intensity = on ? 70 : 0; }
+    rig.lensMat.emissiveIntensity = on ? 2.2 : 0;
+  }
+  function start() {
+    if (active) return;
+    if (!obstacles) buildObstacles();
+    active = true; releaseKeys(); if (fpControls.isLocked) fpControls.unlock();
+    walkHint.style.display = 'none'; document.getElementById('osRun').style.visibility = 'hidden';
+    exitBtn.textContent = '✕ Get out'; exitBtn.style.display = 'block';
+    doorWant = 1; snd.door(); pending = 'in';            // door swings open, then you're in and it shuts
+    heading = g.rotation.y; camYaw = 0; view = 'chase';
+    say(IN());
+  }
+  function stop() {
+    if (!active) return;
+    if (Math.abs(speed) > 1.2) { toast('Slow down to get out'); return; }
+    speed = 0; doorWant = 1; snd.door(); pending = 'out'; snd.engine(false);
+  }
+  function finishOut() {
+    active = false; hush(); exitBtn.style.display = 'none'; exitBtn.textContent = '✕ Stand up';
+    document.getElementById('osRun').style.visibility = '';
+    const p = doorSpot(); camera.position.set(p.x, EYE_H, p.z);
+    camera.rotation.set(0, heading + Math.PI, 0, 'YXZ');             // facing the way the car points
+    walkHint.style.display = 'block'; updateOS();
+  }
+  function act(a) {
+    if (!active) return;
+    if (a === 'lights') setLights(!lightsOn);
+    else if (a === 'horn') snd.horn();
+    else if (a === 'view') { view = view === 'chase' ? 'seat' : 'chase'; camYaw = 0; camPitch = view === 'chase' ? 0.28 : 0; }
+  }
+  function onE() { if (active) { stop(); return true; } if (near()) { start(); return true; } return false; }
+  function look(dx, dy) { dragging = true; camYaw -= dx * 0.006; camPitch = Math.max(view === 'chase' ? 0.05 : -0.6, Math.min(view === 'chase' ? 0.9 : 0.6, camPitch + dy * 0.004)); }
+  // mouse drag on the canvas orbits the camera while driving
+  renderer.domElement.addEventListener('pointermove', e => { if (active && e.buttons && e.pointerType === 'mouse') look(e.movementX, e.movementY); });
+  addEventListener('pointerup', () => { dragging = false; });
+  addEventListener('keydown', e => { if (active && e.code === 'Space') { handbrake = true; e.preventDefault(); } });
+  addEventListener('keyup', e => { if (e.code === 'Space') handbrake = false; });
+  const _cam = new V3(), _tgt = new V3();
+  function update(dt) {
+    // door: swing open / shut (0 … 1.05 rad); getting in / out happens with the door open
+    door += (doorWant - door) * Math.min(1, dt * 5);
+    rig.doorPivot.rotation.y = 1.05 * door;
+    if (pending && door > 0.9) {
+      if (pending === 'in') { doorWant = 0; snd.engine(true, 0.85); }
+      else { doorWant = 0; finishOut(); }
+      pending = null; setTimeout(() => snd.door(), 250);
+    }
+    if (!active) {
+      if (near()) say(TOUCH ? '<b>Tap</b> to get in' : '<kbd>E</kbd> get in and drive'); else hush();
+      return;
+    }
+    if (pending) return;                              // getting in / out
+    // input: keys + left stick
+    const thr = ((keys.w ? 1 : 0) - (keys.s ? 1 : 0)) + joyInput.f, st = ((keys.a ? 1 : 0) - (keys.d ? 1 : 0)) - joyInput.s;
+    const throttle = Math.max(-1, Math.min(1, thr)), steerIn = Math.max(-1, Math.min(1, st));
+    let acc = 0;
+    if (handbrake) acc = -Math.sign(speed) * Math.min(Math.abs(speed) / dt, 10);
+    else if (throttle > 0.05) acc = speed < -0.2 ? 9 * throttle : 4.2 * throttle;              // brake if rolling back, else drive
+    else if (throttle < -0.05) acc = speed > 0.2 ? 9 * throttle : 2.6 * throttle;              // brake, then reverse
+    else acc = -Math.sign(speed) * Math.min(Math.abs(speed) / dt, 1.2 + 0.04 * speed * speed); // coast: rolling resistance + drag
+    speed = Math.max(-MAXR, Math.min(MAXF, speed + acc * dt));
+    brakeGlow += (((throttle < -0.05 && speed > 0.2) || (throttle > 0.05 && speed < -0.2) || handbrake ? 1 : 0) - brakeGlow) * Math.min(1, dt * 12);
+    // steering: eased, less lock at speed
+    const lock = 0.55 / (1 + Math.abs(speed) * 0.07);
+    steer += (steerIn * lock - steer) * Math.min(1, dt * 5);
+    // move (bicycle model), revert on collision with a small bounce
+    const px = g.position.x, pz = g.position.z, ph = heading;
+    heading += speed / WB * Math.tan(steer) * dt;
+    g.position.x += Math.sin(heading) * speed * dt; g.position.z += Math.cos(heading) * speed * dt;
+    if (blocked(g.position.x, g.position.z, heading)) { g.position.x = px; g.position.z = pz; heading = ph; if (Math.abs(speed) > 2) snd.door(); speed *= -0.25; }
+    g.rotation.set(-0.012 * Math.max(-3, Math.min(3, acc)) / 3, heading, 0, 'YXZ');   // nose dips braking, lifts accelerating
+    // wheels spin and the fronts steer
+    for (const w of rig.wheels) { w.w.rotation.x += (w.sx > 0 ? 1 : -1) * speed / rig.TR * dt; w.w.rotation.y = w.base + (w.front ? steer : 0); }
+    rig.tailMat.emissiveIntensity = (lightsOn ? 0.8 : 0) + 2.5 * brakeGlow;
+    snd.engine(true, 0.85 + Math.abs(speed) / MAXF * 1.0 + Math.abs(throttle) * 0.12);
+    // camera
+    g.updateMatrixWorld();
+    if (view === 'seat') {
+      local(rig.seatEye.x, rig.seatEye.y, rig.seatEye.z, _cam); camera.position.copy(_cam);
+      camera.rotation.set(-camPitch * 0.6, heading + Math.PI + camYaw, 0, 'YXZ');
+    } else {
+      if (!dragging && Math.abs(speed) > 1.5) camYaw *= Math.exp(-dt * 1.6);                 // swing back behind
+      const yaw = heading + camYaw, dist = 6.4;
+      _cam.set(g.position.x - Math.sin(yaw) * dist * Math.cos(camPitch), 1.0 + dist * Math.sin(camPitch) + 0.6, g.position.z - Math.cos(yaw) * dist * Math.cos(camPitch));
+      _cam.y = Math.max(0.6, _cam.y);
+      camera.position.lerp(_cam, 1 - Math.exp(-dt * 6));
+      _tgt.set(g.position.x + Math.sin(heading) * 1.2, 1.1, g.position.z + Math.cos(heading) * 1.2);
+      camera.lookAt(_tgt);
+    }
+  }
+  return { update, onE, act, look, start, stop, get active() { return active; }, get speed() { return speed; } };
 })();
 
 // ---------- CAMPERS (per user — "see people moving around", GitHub-Pages only, so they're simulated, not online
@@ -7090,8 +7383,8 @@ document.getElementById('rainOn').addEventListener('change', e => { raining = e.
 document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
 document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
-document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else hammock?.stop(); }); // stand up (touch has no Esc / WASD)
-document.getElementById('actHud').addEventListener('click', e => { const o = e.currentTarget.dataset.owner; if (o === 'deer') life.deerOnE(); else if (o === 'rabbit') life.rabbitOnE(); else hammock?.onE(); }); // tap the pill = E
+document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else if (car?.active) car.onE(); else hammock?.stop(); }); // stand up / get out (touch has no Esc / WASD)
+document.getElementById('actHud').addEventListener('click', e => { const o = e.currentTarget.dataset.owner; if (o === 'car') { if (e.target.dataset.act) car.act(e.target.dataset.act); else car.onE(); } else if (o === 'deer') life.deerOnE(); else if (o === 'rabbit') life.rabbitOnE(); else hammock?.onE(); }); // tap the pill = E
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
 const viewLink = () => {
@@ -7239,9 +7532,12 @@ renderer.setAnimationLoop(() => {
   swimMove = 0;                               // set below only while walking AND moving in the pond
   fishing?.update(dt);                        // fishing spot: prompt, cast/bite/reel, seated camera
   hammock?.update();                          // hammock: prompt, or ride the rocking sling while lying in it
+  car?.update(dt);                            // the G-Class: prompt, door, driving, chase camera
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
   if (fishing?.active) {
     // sitting on the fishing stool: the fishing spot drives the camera
+  } else if (car?.active) {
+    // driving: the car module moves the car and places the camera (car.update below)
   } else if (hammock?.active) {
     // lying in the hammock: position rides the sling (hammock.update); mouse lock / drag-to-look still turn the view
   } else if (walking) {
