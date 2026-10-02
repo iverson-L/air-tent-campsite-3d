@@ -366,7 +366,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 3.5);
 controls.maxPolarAngle = Math.PI * 0.95; // can swing below the orbit centre to look UP (per user); the loop lowers it so the camera stays above the ground
 controls.minDistance = 1.5; // close enough to fly in with WASD
-controls.maxDistance = 45;
+controls.maxDistance = 70;
 controls.update();
 
 // ---------- first person mode (WASD + mouse look, Ctrl ducks) ----------
@@ -851,10 +851,26 @@ const pondOutline = (k = 1, n = 120) => Array.from({ length: n }, (_, i) => {
   const a = i / n * Math.PI * 2, r = pondR(a) * k;
   return [POND.x + Math.cos(a) * r * POND.sx, POND.z + Math.sin(a) * r];
 });
+// ---------- driving space (per user: "make bigger space to drive around"): the world is now 140 m in radius (its
+// edge stays hidden in the fog), with a dirt track — a ~120 m wobbly loop round the camp plus a spur from the G-Class's
+// parking spot. Trees and grass keep off it (TRACK.near). =====
+const WORLD_R = 140;
+const TRACK = (() => {
+  const P = (x, z) => new THREE.Vector3(x, 0, z);
+  const loop = new THREE.CatmullRomCurve3(Array.from({ length: 14 }, (_, i) => { const a = i / 14 * Math.PI * 2, w = 1 + 0.08 * Math.sin(3 * a + 0.7) + 0.05 * Math.sin(5 * a + 2);
+    return P(Math.cos(a) * 62 * w, 4 + Math.sin(a) * 54 * w); }), true, 'centripetal');
+  const j = loop.getPoint(0);
+  const spur = new THREE.CatmullRomCurve3([P(15.6, -1.0), P(26, 0.8), P(40, -1.2), P(54, 2.2), P(j.x, j.z)], false, 'centripetal');
+  const pts = [loop.getSpacedPoints(420), spur.getSpacedPoints(90)];
+  const HALF = 3;                                     // 6 m wide
+  const near = (x, z, d) => { for (const ps of pts) for (let i = 1; i < ps.length; i++) { const a = ps[i - 1], b = ps[i], ex = b.x - a.x, ez = b.z - a.z;
+    const u = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / (ex * ex + ez * ez))); if (Math.hypot(x - a.x - ex * u, z - a.z - ez * u) < d) return true; } return false; };
+  return { loop, spur, pts, HALF, near };
+})();
 const groundShape = new THREE.Shape();
-groundShape.absarc(0, 0, 45, 0, Math.PI * 2, false);
+groundShape.absarc(0, 0, WORLD_R, 0, Math.PI * 2, false);
 groundShape.holes.push(new THREE.Path(pondOutline().map(([x, z]) => new THREE.Vector2(x, -z)))); // shape y = −world z
-const groundGeo = new THREE.ShapeGeometry(groundShape, 64);
+const groundGeo = new THREE.ShapeGeometry(groundShape, 96);
 { // UVs as the old CircleGeometry had them (0..1 across the 90 m disc), so the grass tile stays 2 m
   const uv = groundGeo.attributes.uv, pp = groundGeo.attributes.position;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, pp.getX(i) / 90 + 0.5, pp.getY(i) / 90 + 0.5);
@@ -863,6 +879,33 @@ const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: g
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
+// the dirt track: a ribbon along each curve, a tyre-rutted dirt texture repeating every 6 m, grassy soft edges
+{
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256; const x = c.getContext('2d');
+  x.fillStyle = '#7d6a4f'; x.fillRect(0, 0, 128, 256);
+  for (let i = 0; i < 2600; i++) { const v = 90 + Math.random() * 60 | 0; x.fillStyle = `rgba(${v + 20},${v},${v - 25},${0.25 + Math.random() * 0.35})`; x.fillRect(Math.random() * 128, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2); }
+  for (const cx of [34, 94]) { const gr = x.createLinearGradient(cx - 12, 0, cx + 12, 0); gr.addColorStop(0, 'rgba(60,48,34,0)'); gr.addColorStop(0.5, 'rgba(60,48,34,0.55)'); gr.addColorStop(1, 'rgba(60,48,34,0)'); x.fillStyle = gr; x.fillRect(cx - 12, 0, 24, 256); }   // ruts
+  for (const [x0, x1] of [[0, 14], [128, 114]]) { const gr = x.createLinearGradient(x0, 0, x1, 0); gr.addColorStop(0, 'rgba(98,122,64,0.95)'); gr.addColorStop(1, 'rgba(98,122,64,0)'); x.fillStyle = gr; x.fillRect(Math.min(x0, x1), 0, 14, 256); }   // grassy verges
+  x.fillStyle = 'rgba(98,122,64,0.5)'; x.fillRect(58, 0, 12, 256);                                                                       // grass strip down the middle
+  const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const ribbon = (ps, y, closed) => {
+    const pos = [], uv = [], idx = []; let len = 0;
+    const n = ps.length - (closed ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const a = ps[Math.max(0, i - 1)], b = ps[Math.min(ps.length - 1, i + 1)], tx = b.x - a.x, tz = b.z - a.z, L = Math.hypot(tx, tz) || 1;
+      const nx = -tz / L * TRACK.HALF, nz = tx / L * TRACK.HALF;
+      if (i) len += ps[i].distanceTo(ps[i - 1]);
+      pos.push(ps[i].x + nx, y, ps[i].z + nz, ps[i].x - nx, y, ps[i].z - nz); uv.push(0, len / 6, 1, len / 6);
+      if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); }
+    }
+    if (closed) { const k = (n - 1) * 2; idx.push(k, 0, k + 1, k + 1, 0, 1); }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx); geo.computeVertexNormals(); if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
+    const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; scene.add(m);
+  };
+  ribbon(TRACK.pts[0], 0.012, true); ribbon(TRACK.pts[1], 0.016, false);
+}
 
 // camping area — rounded-rect gravel patch; everything outside is grass.
 // Sized to cover the full layout for any gap in 3.3–3.8 m: the two tents + tarp + stakes, the campfire, and the
@@ -4518,6 +4561,7 @@ function placeTrees(count, rMin, rMax, scMin, scMax, canopyR) {
     const sc = scMin + Math.random() * (scMax - scMin);
     const cr = canopyR * sc; // this tree's canopy radius at ground scale
     if (treeSpots.some(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) < cr + tr)) continue; // no overlap
+    if (TRACK.near(x, z, TRACK.HALF + 1.2 + cr * 0.6)) continue;                         // keep the dirt track clear
     treeSpots.push([x, z, cr]);
     out.push({ x, z, sc });
   }
@@ -4581,7 +4625,8 @@ function shadeVerts(geo, f) {
   const canopyDepth = swayDepth(1.5, 0.012);
 
   // 2 anchors + 32 random = 34 total (same count as before)
-  const treePos = [[-9.5, 6.5, 1.2], [9.5, -6.5, 1.2], ...placeTrees(32, 16, 38, 0.8, 1.7, 1.9).map(t => [t.x, t.z, t.sc])];
+  const treePos = [[-9.5, 6.5, 1.2], [9.5, -6.5, 1.2], ...placeTrees(32, 16, 38, 0.8, 1.7, 1.9).map(t => [t.x, t.z, t.sc]),
+    ...placeTrees(80, 44, 130, 0.9, 1.9, 1.9).map(t => [t.x, t.z, t.sc])];   // the open country round the track
 
   const trunkIM = new THREE.InstancedMesh(mergeGeometries([trunkGeo, flare]), trunkMat, treePos.length);
   const canopyIM = new THREE.InstancedMesh(canopyGeo, canopyMat, treePos.length);
@@ -4627,7 +4672,7 @@ function shadeVerts(geo, f) {
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5d4130, roughness: 1, map: barkTex });
   const canopyMat = addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, map: leafTex, vertexColors: true }), 2.4, 0.016);
   const canopyDepth = swayDepth(2.4, 0.016);
-  const pos = [...[HAMMOCK.a, HAMMOCK.b].map(([x, z]) => ({ x, z, sc: 1.15 })), ...placeTrees(9, 15, 39, 0.9, 1.7, 1.8)];
+  const pos = [...[HAMMOCK.a, HAMMOCK.b].map(([x, z]) => ({ x, z, sc: 1.15 })), ...placeTrees(9, 15, 39, 0.9, 1.7, 1.8), ...placeTrees(26, 44, 130, 0.9, 1.8, 1.8)];
   const trunkIM = new THREE.InstancedMesh(mergeGeometries(limbs), trunkMat, pos.length);
   const canopyIM = new THREE.InstancedMesh(mergeGeometries(clumps), canopyMat, pos.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
@@ -5971,7 +6016,7 @@ life = (() => {
     const N = LOW_END ? 1100 : 2600, grass = new THREE.InstancedMesh(mergeGeometries(blades),
       addSway(new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide, roughness: 1 }), 0, 0.2), N);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
-    const free = (x, z) => Math.hypot(x, z) < 42 && !inSite(x, z) && !inPond(x, z);
+    const free = (x, z) => Math.hypot(x, z) < 42 && !inSite(x, z) && !inPond(x, z) && !TRACK.near(x, z, TRACK.HALF);
     let k = 0;
     for (let guard = 0; k < N && guard < N * 8; guard++) {
       const a = Math.random() * Math.PI * 2, r = 7 + Math.pow(Math.random(), 0.8) * 30, x = 0.5 + Math.cos(a) * r, z = 3.75 + Math.sin(a) * r;
@@ -7044,7 +7089,7 @@ car = (() => {
     const sn = Math.sin(hd), cs = Math.cos(hd);
     for (const off of [-1.45, 0, 1.45]) {
       const cx = px + sn * off, cz = pz + cs * off, R = 1.0;
-      if (Math.hypot(cx, cz) > 38) return true;
+      if (Math.hypot(cx, cz) > WORLD_R - 4) return true;
       if (pond.depthAt(cx, cz) || pond.depthAt(cx + cs * 0.9, cz - sn * 0.9) || pond.depthAt(cx - cs * 0.9, cz + sn * 0.9)) return true;
       for (const [x, z] of obstacles.trees) if (Math.hypot(cx - x, cz - z) < R + 0.4) return true;
       for (const [x0, x1, z0, z1] of obstacles.boxes) { const dx = cx - Math.max(x0, Math.min(cx, x1)), dz = cz - Math.max(z0, Math.min(cz, z1)); if (dx * dx + dz * dz < R * R) return true; }
@@ -7578,7 +7623,7 @@ renderer.setAnimationLoop(() => {
       if (jumpVy < 0 && camera.position.y <= targetH) { camera.position.y = targetH; jumpVy = 0; grounded = true; } // land
     }
     const r = Math.hypot(camera.position.x, camera.position.z);
-    if (r > 40) { camera.position.x *= 40 / r; camera.position.z *= 40 / r; } // stay in the scene
+    const RW = WORLD_R - 6; if (r > RW) { camera.position.x *= RW / r; camera.position.z *= RW / r; } // stay in the scene
   } else {
     // orbit view (per user): WASD flies the view — camera and orbit target move together; W/S along the direction the
     // camera FACES (so looking down, W descends toward what you look at), A/D strafe level. Faster when zoomed out;
@@ -7590,7 +7635,7 @@ renderer.setAnimationLoop(() => {
       const dist = (keys.shift ? 0.35 : 1) * Math.max(2.5, 0.6 * camera.position.distanceTo(controls.target)) * dt / len;
       _move.copy(_fwd).multiplyScalar(f * dist).addScaledVector(_right, s * dist);
       _move.y = Math.max(_move.y, 0.4 - camera.position.y); // glide just above the ground, never through it
-      if (Math.hypot(controls.target.x + _move.x, controls.target.z + _move.z) < 38) {
+      if (Math.hypot(controls.target.x + _move.x, controls.target.z + _move.z) < WORLD_R - 10) {
         camera.position.add(_move); controls.target.add(_move);
         // the orbit centre can't sink below the ground (clamping the MOVE by it stopped all descent — bug): re-seat
         // it where the view ray meets the ground, so the view direction is unchanged

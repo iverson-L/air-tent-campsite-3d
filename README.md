@@ -19,7 +19,7 @@ An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, 
   - a PVC bathtub floor, a snow skirt and an air bed or sofa
 - Adjustable gap between the tents, with flysheet coverage readout
 - Day / night mode (lanterns, string lights, campfire)
-- Camp life: 3D grass and wildflowers, hammock, clothesline, a G-Class you can get in and drive (third-person chase cam, headlights, horn), kettle over the fire, ducks, birds, fireflies at night, and a stag you can sneak up on and feed an apple (it bolts if you run; its eyes shine at night), and a wild rabbit you can feed a carrot
+- Camp life: 3D grass and wildflowers, hammock, clothesline, a G-Class you can get in and drive round a dirt-track loop in the open country (third-person chase cam, headlights, horn), kettle over the fire, ducks, birds, fireflies at night, and a stag you can sneak up on and feed an apple (it bolts if you run; its eyes shine at night), and a wild rabbit you can feed a carrot
 - Simulated campers wandering the site (fire, picnic table, tents, pond, hammock); they shelter under the flysheet when it rains (off by default, key `7`)
 - Copy a link to your exact view, or save a photo
 - Rain (overcast sky, pond ripples, dry under the tents) and procedural ambient sound (birds, crickets, campfire, rain, and water swishes when you swim)
