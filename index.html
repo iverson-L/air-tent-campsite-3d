@@ -380,6 +380,7 @@ const keys = { w: false, a: false, s: false, d: false, shift: false, duck: false
 let fishing = null; // the pond's fishing spot (set up with the pond; E to fish)
 let hammock = null; // lying in the hammock (E, set up after camp life)
 let car = null;     // driving the G-Class (E at the driver's door)
+let acts = null;    // camp activities: marshmallows, firewood, skipping stones, stargazing, the G-Class's back
 let life = null;    // camp life: grass, props, wildlife, fireflies, rain, sound (set up after the tents)
 let raining = false;
 // a missed keyup leaves a movement key "held" and the camera drifts on its own (per user). Clear them whenever the
@@ -396,7 +397,9 @@ window.addEventListener('keydown', e => {
     if (!e.repeat && e.code === 'KeyV') car.act('view');
     if (!e.repeat && e.code === 'KeyE') car.onE();
   }
-  else if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } car?.onE() || (fishing?.onE(), hammock?.onE(), life?.deerOnE() || life?.rabbitOnE()); }
+  else if (acts?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape', 'Space'].includes(e.code)) { acts.end(false); return; }
+  else if (e.code === 'KeyR' && !e.repeat && acts?.onR()) return;
+  else if (e.code === 'KeyE' && !e.repeat) { if (hammock?.active) { hammock.stop(); return; } car?.onE() || acts?.onE() || (fishing?.onE(), hammock?.onE(), life?.deerOnE() || life?.rabbitOnE()); }
   if (fishing?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape'].includes(e.code)) { fishing.stop(); return; }
   if (hammock?.active && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Escape', 'Space'].includes(e.code)) { hammock.stop(); return; }
   if (e.code === 'KeyW') keys.w = true;
@@ -489,6 +492,7 @@ walkBtn.addEventListener('click', () => {
   if (fishing?.active) fishing.stop();       // (bug sweep) stand up from the fishing stool first, then switch modes
   if (hammock?.active) hammock.stop();
   if (car?.active) return;                   // get out of the car first (E)
+  if (acts?.active) acts.end(false);
   walking ? exitWalk() : enterWalk();
 });
 // desktop: click the scene while walking → pointer lock for mouse look.
@@ -5155,14 +5159,33 @@ const campfire = (() => {
     return { sp, t0: i / 6 };
   });
 
+  // added logs (per user: "add firewood"): each one flares the fire (boost → taller flames, faster sparks, brighter
+  // light), then chars and shrinks away over ~45 s
+  let boost = 0;
+  const burning = [], burnMat = new THREE.MeshStandardMaterial({ color: 0x3a2618, roughness: 0.9, emissive: 0xff4a0c, emissiveIntensity: 0 });
   return {
+    get boost() { return boost; },
+    addLog() {
+      boost = Math.min(1.6, boost + 0.8);
+      const lg = new THREE.Mesh(logGeo(0.5, 0.055, true), new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 0.85 }));
+      const a = Math.random() * Math.PI * 2; lg.rotation.set(0, a, Math.PI / 2 - 0.25); lg.position.set(Math.cos(a) * 0.05, 0.2, Math.sin(a) * 0.05);
+      G.add(lg); burning.push({ lg, life: 0 });
+      if (burning.length > 3) { const o = burning.shift(); G.remove(o.lg); }
+    },
     update(t, dt, night) {
+      boost = Math.max(0, boost - dt * 0.03);
+      for (let i = burning.length - 1; i >= 0; i--) { const b = burning[i]; b.life += dt;
+        const u = Math.min(1, b.life / 45); b.lg.material.color.setRGB(0.42 * (1 - u) + 0.1 * u, 0.29 * (1 - u) + 0.07 * u, 0.19 * (1 - u) + 0.05 * u);
+        b.lg.material.emissive.setHex(0xff4a0c); b.lg.material.emissiveIntensity = 0.6 * Math.sin(Math.PI * Math.min(1, u * 1.4));
+        b.lg.scale.set(1 - 0.5 * u, 1 - 0.6 * u, 1 - 0.5 * u); b.lg.position.y = 0.2 - 0.12 * u;
+        if (u >= 1) { G.remove(b.lg); burning.splice(i, 1); } }
+      const B = 1 + 0.6 * boost;
       const glow = 0.85 + 0.15 * Math.sin(t * 7) + 0.08 * Math.sin(t * 17.3);
       bedMat.emissiveIntensity = (night ? 1.5 : 0.9) * glow;
       coalMat.emissiveIntensity = (night ? 1.8 : 1.1) * (0.8 + 0.2 * Math.sin(t * 5 + 1));
       for (const f of flames) {
         const k = 1 + 0.22 * Math.sin(t * f.fr + f.ph) + 0.1 * Math.sin(t * f.fr * 2.3 + f.ph * 2);
-        f.sp.scale.set(f.w * (1.05 - 0.12 * (k - 1)), f.h * k, 1);
+        f.sp.scale.set(f.w * (1.05 - 0.12 * (k - 1)) * Math.sqrt(B), f.h * k * B, 1);
         f.sp.position.x = f.x + Math.sin(t * 3.1 + f.ph) * 0.025;
         f.sp.position.z = f.z + Math.cos(t * 2.7 + f.ph) * 0.025;
         f.sp.material.opacity = f.op * (0.85 + 0.15 * Math.sin(t * f.fr * 1.7 + f.ph));
@@ -5171,7 +5194,7 @@ const campfire = (() => {
         sp.life += dt;
         if (sp.life > sp.max) respawn(sp);
         sp.vx += (Math.random() - 0.5) * dt * 0.8; sp.vz += (Math.random() - 0.5) * dt * 0.8;
-        sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.z += sp.vz * dt;
+        sp.x += sp.vx * dt; sp.y += sp.vy * dt * B; sp.z += sp.vz * dt;
         const fade = Math.max(0, 1 - sp.life / sp.max);
         sPos.set([sp.x, sp.y, sp.z], i * 3); sCol.set([1.0 * fade, 0.55 * fade, 0.18 * fade], i * 3);
       });
@@ -5822,7 +5845,7 @@ fishing = (() => {
     camera.position.lerp(eye, Math.min(1, dt * 4));
     camera.lookAt(look);
   }
-  return { update, onE, start, stop, get active() { return active; } };
+  return { update, onE, start, stop, seat, get active() { return active; } };
 })();
 
 // ---------- string lights (catenary between poles + anchor trees) ----------
@@ -6141,7 +6164,12 @@ life = (() => {
     box(2 * HW - 0.1, 0.42, 0.04, black, 0, 0.83, ZF - 0.02);
     for (let i = 0; i < 4; i++) box(0.98, 0.028, 0.03, satin, 0, 0.78 + i * 0.085, ZF + 0.012);         // grille slats
     box(2 * HW - 0.08, 0.05, ZF - ZR - 0.1, trim, 0, BOT + 0.02, 0);                                    // floor
-    box(2 * HW - 0.06, BELT - BOT - 0.04, 0.045, paint, 0, (BELT + BOT) / 2, ZR + 0.022);              // rear door (lower)
+    // rear door (side-hinged on local −x, as on the G-Class): lower panel, window and the spare wheel swing together
+    const rearPivot = new THREE.Group(); rearPivot.position.set(-HW + 0.03, 0, ZR); rearPivot.userData.dynamic = true; g.add(rearPivot);
+    const RX = HW - 0.03;                                                                               // pivot-local x of the car's centreline
+    box(2 * HW - 0.06, BELT - BOT - 0.04, 0.045, paint, RX, (BELT + BOT) / 2, 0.022, rearPivot);       // rear door (lower)
+    box(0.05, ROOF - BELT - 0.08, 0.05, paint, RX + HW - 0.07, (ROOF + BELT) / 2 - 0.03, 0.03, rearPivot, 0.008);   // its window frame (latch side)
+    box(2 * HW - 0.12, 0.05, 0.05, paint, RX, ROOF - 0.09, 0.03, rearPivot, 0.008);                                 // frame top
     for (const a of AX) for (const sx of [-1, 1]) {                                                    // wheel wells (hide the cabin through the arches)
       const w = new THREE.Mesh(new THREE.CylinderGeometry(AR - 0.01, AR - 0.01, 0.34, 18, 1, true, 0, Math.PI), wellMat);   // upper half
       w.rotation.z = Math.PI / 2; w.position.set(sx * 0.77, TR, a); g.add(w);
@@ -6160,7 +6188,7 @@ life = (() => {
     { const gl = new THREE.Mesh(doorGlassGeo, glass); gl.position.x = HW - 0.025; g.add(gl); }        // passenger door glass
     { const ws = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.08, 0.78), glass); ws.position.set(0, (BELT + ROOF) / 2, 0.525); ws.rotation.x = -0.29; g.add(ws); }  // windscreen, edges under the A pillars / header / cowl
     box(2 * HW - 0.1, 0.06, 0.08, paint, 0, ROOF - 0.04, 0.43, g, 0.01);                               // header
-    { const rg = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.08, 0.69), glass); rg.position.set(0, 1.58, ZR + 0.02); g.add(rg); }   // rear window, edges under the D pillars / roof
+    { const rg = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.08, 0.69), glass); rg.position.set(RX, 1.58, 0.02); rearPivot.add(rg); }   // rear window (on the door)
     // cabin
     box(2 * HW - 0.12, 0.26, 0.42, trim, 0, 1.1, 0.42, g, 0.04);                                         // dashboard
     { const scr = box(0.78, 0.1, 0.025, screenMat, -0.2, 1.255, 0.25, g, 0.01); scr.rotation.x = -0.3; } // widescreen, low on the dash
@@ -6222,10 +6250,10 @@ life = (() => {
       return w;
     };
     for (const a of AX) for (const sx of [-1, 1]) { const w = wheel(g, sx * 0.8, TR, a, sx > 0 ? 0 : Math.PI); w.userData.dynamic = true; wheels.push({ w, front: a > 0, sx, base: w.rotation.y }); }
-    { const sp = new THREE.Group(); sp.position.set(0.05, 1.16, ZR - 0.2); sp.rotation.y = -Math.PI / 2; g.add(sp);   // spare: tyre + black cover
+    { const sp = new THREE.Group(); sp.position.set(RX + 0.05, 1.16, -0.2); sp.rotation.y = -Math.PI / 2; rearPivot.add(sp);   // spare: tyre + black cover
       const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; sp.add(t);
       const cov = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 28), black); cov.rotation.z = Math.PI / 2; cov.position.x = 0.02; sp.add(cov);
-      box(0.14, 0.12, 0.1, black, 0.05, 1.16, ZR - 0.08); }
+      box(0.14, 0.12, 0.1, black, RX + 0.05, 1.16, -0.08, rearPivot); }
     // headlight beams (off until switched on in the car — L)
     const beams = [-1, 1].map(sx => {
       const l = new THREE.SpotLight(0xfff2dc, 0, 40, 0.42, 0.5, 2); l.position.set(sx * 0.68, 0.98, ZF + 0.1);
@@ -6259,7 +6287,7 @@ life = (() => {
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    carRig = { g, doorPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat };
+    carRig = { g, doorPivot, rearPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat };
   }
 
   // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
@@ -7201,6 +7229,224 @@ car = (() => {
   return { update, onE, act, look, start, stop, get active() { return active; }, get speed() { return speed; } };
 })();
 
+// ---------- CAMP ACTIVITIES (per user: picked from a list — 1 roast marshmallows, 2 add firewood, 7 skip stones,
+// 8 stargazing, 12 sit in the back of the G-Class). All first person, via the shared #actHud pill (owner 'act'):
+//  • fire (within ~2.6 m): E roast a marshmallow — a stick from your hand into the flames; it goes white → golden →
+//    brown → black, and catches fire if you leave it; E pulls it out and rates it. R (or 🪵) tosses a log on: the fire
+//    flares (campfire.addLog → boost) and the log chars away.
+//  • pond bank (not at the stool): E skips a stone where you're facing — it bounces with ripples, counts the skips,
+//    remembers your best.
+//  • picnic blanket: E lies back — stargazing at night (constellation lines + names, shooting stars), cloud watching
+//    by day.
+//  • back of the G-Class: E swings the rear door open and sits you in the back, looking out.
+// Seated / lying ones lock your feet (look stays free); E, WASD, Space, Esc or ✕ Stand up get you up. =====
+acts = (() => {
+  const hud = document.getElementById('actHud'), exitBtn = document.getElementById('fishExit');
+  const TOUCH = matchMedia('(pointer: coarse)').matches, V3 = THREE.Vector3, rnd = (a, b) => a + Math.random() * (b - a);
+  const FIRE = new V3(0, 0, 4.05), _f = new V3(), _r = new V3(), _p = new V3();
+  const say = html => { hud.innerHTML = html; hud.style.display = 'block'; hud.dataset.owner = 'act'; };
+  const hush = () => { if (hud.dataset.owner === 'act') { hud.style.display = 'none'; hud.dataset.owner = ''; } };
+  const onFoot = () => walking && !fishing?.active && !hammock?.active && !car?.active;
+  const flat = v => Math.hypot(v.x, v.z);
+  const fwd = () => { camera.getWorldDirection(_f); _f.y = 0; return _f.normalize(); };
+  let cur = null;                                       // the running seated / lying activity
+  let back = null;                                      // where you stood
+
+  // ----- picnic blanket for stargazing: an open patch near the camp, off the track, trees and the gravel -----
+  const BL = [[-5.5, -11.5], [4.5, -11.5], [-13, 11], [12.5, 15], [-2, 19]].find(([x, z]) =>
+    treeSpots.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > tr + 1.8) && !TRACK.near(x, z, 5) && !pond.depthAt(x, z)
+    && !(x > AREA.x0 - 1.5 && x < AREA.x1 + 1.5 && z > AREA.z0 - 1.5 && z < AREA.z1 + 1.5)) || [-5.5, -11.5];
+  const blanket = new THREE.Group(); blanket.position.set(BL[0], 0, BL[1]); blanket.rotation.y = 0.4; scene.add(blanket);
+  { const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+    x.fillStyle = '#b8342c'; x.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < 8; i++) { x.fillStyle = 'rgba(245,240,225,0.55)'; x.fillRect(i * 16 + 4, 0, 6, 128); x.fillRect(0, i * 16 + 4, 128, 6); }
+    const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(3, 4); tex.colorSpace = THREE.SRGBColorSpace;
+    const geo = new THREE.PlaneGeometry(1.5, 2.0, 12, 16), pp = geo.attributes.position;
+    for (let i = 0; i < pp.count; i++) pp.setZ(i, 0.004 * Math.sin(pp.getX(i) * 9) * Math.cos(pp.getY(i) * 7));   // soft rumples
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 })); m.rotation.x = -Math.PI / 2; m.position.y = 0.012; m.receiveShadow = true; blanket.add(m);
+    const pillow = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), new THREE.MeshStandardMaterial({ color: 0xece4d2, roughness: 0.9 }));
+    pillow.scale.set(0.26, 0.06, 0.16); pillow.position.set(0, 0.06, -0.78); pillow.castShadow = pillow.receiveShadow = true; blanket.add(pillow);
+  }
+  // ----- constellations (bright stars always shown with the night sky; lines + names only while stargazing) -----
+  const consts = new THREE.Group(); consts.visible = false; skyGroup.add(consts);
+  const bright = [];
+  const toSky = (az, el, dx, dy, R = 160) => { const a = THREE.MathUtils.degToRad(az + dx / Math.cos(THREE.MathUtils.degToRad(el))), e = THREE.MathUtils.degToRad(el + dy);
+    return new V3(Math.sin(a) * Math.cos(e) * R, Math.sin(e) * R, -Math.cos(a) * Math.cos(e) * R); };
+  const nameSprite = txt => { const c = document.createElement('canvas'); c.width = 256; c.height = 64; const x = c.getContext('2d');
+    x.font = '600 30px system-ui, sans-serif'; x.fillStyle = 'rgba(200,220,255,0.9)'; x.textAlign = 'center'; x.fillText(txt, 128, 42);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, fog: false })); sp.scale.set(24, 6, 1); return sp; };
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x9fbcff, transparent: true, opacity: 0.45, fog: false });
+  for (const [name, az, el, pts, links] of [
+    ['Big Dipper', 25, 52, [[0, 0], [8, -1], [13, -4], [17, -7], [24, -6], [27, -12], [19, -13]], [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 3]]],
+    ['Cassiopeia', 205, 48, [[0, 0], [5, -4], [9, 0], [14, -3], [18, 2]], [[0, 1], [1, 2], [2, 3], [3, 4]]],
+    ['Orion', 120, 38, [[0, 0], [8, 0.5], [2.5, -8], [4.5, -8.6], [6.5, -9.2], [1, -16], [9, -15.5]], [[0, 2], [1, 4], [2, 3], [3, 4], [2, 5], [4, 6], [0, 1]]],
+  ]) {
+    const P = pts.map(([dx, dy]) => toSky(az, el, dx, dy)); bright.push(...P);
+    const lg = new THREE.BufferGeometry().setFromPoints(links.flatMap(([a, b]) => [P[a], P[b]]));
+    consts.add(new THREE.LineSegments(lg, lineMat));
+    const lab = nameSprite(name); lab.position.copy(toSky(az, el, pts.reduce((s, p) => s + p[0], 0) / pts.length, Math.min(...pts.map(p => p[1])) - 5)); consts.add(lab);
+  }
+  stars.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(bright), new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, fog: false, transparent: true, opacity: 0.95 })));
+  const shooting = { line: new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V3(), new V3()]), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, fog: false })), t: 0, next: 0, a: new V3(), b: new V3() };
+  skyGroup.add(shooting.line);
+
+  // ----- marshmallow on a stick -----
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.008, 1, 6), new THREE.MeshStandardMaterial({ color: 0x8a6a46, roughness: 0.9 }));
+  const mallowMat = new THREE.MeshStandardMaterial({ color: 0xf7f3ea, roughness: 0.8, emissive: 0xff5a10, emissiveIntensity: 0 });
+  const mallow = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.04, 14), mallowMat);
+  const mFlame = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeSunTexture(64), color: 0xff7a1a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 }));
+  mFlame.scale.set(0.09, 0.14, 1); mFlame.center.set(0.5, 0.25);
+  stick.visible = mallow.visible = mFlame.visible = false; scene.add(stick, mallow, mFlame);
+  const ROAST = [[0, 0xf7f3ea], [0.35, 0xf0dcb0], [0.6, 0xd9a55a], [0.8, 0x9a6230], [1.0, 0x2a1c12]];
+  const roastColor = r => { for (let i = 1; i < ROAST.length; i++) if (r <= ROAST[i][0]) { const [a, ca] = ROAST[i - 1], [b, cb] = ROAST[i];
+    return mallowMat.color.setHex(ca).lerp(_c.setHex(cb), (r - a) / (b - a)); } return mallowMat.color.setHex(0x1a1410); };
+  const _c = new THREE.Color();
+  let roast = 0, perfect = 0;
+
+  // ----- thrown things: firewood logs and skipping stones -----
+  const thrown = [];
+  const logMesh = () => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.45, 8), new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 0.85 })); m.castShadow = true; scene.add(m); return m; };
+  const stoneGeo = new THREE.DodecahedronGeometry(0.035, 0); stoneGeo.scale(1, 0.4, 1);
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8a8a84, roughness: 0.8, flatShading: true });
+  const ripples = [], rippleGeo = new THREE.RingGeometry(0.08, 0.12, 32); rippleGeo.rotateX(-Math.PI / 2);
+  const ripple = (x, z, big = 1) => { const m = new THREE.Mesh(rippleGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }));
+    m.position.set(x, POND.waterY + 0.012, z); m.userData.big = big; scene.add(m); ripples.push({ m, t: 0 }); };
+  let best = 0; try { best = +localStorage.getItem('skipBest') || 0; } catch {}
+  function throwLog() {
+    const hand = _p.copy(camera.position).add(fwd().multiplyScalar(0.4)); hand.y -= 0.35;
+    thrown.push({ kind: 'log', m: logMesh(), from: hand.clone(), to: new V3(FIRE.x, 0.25, FIRE.z), t: 0, spin: rnd(4, 7) });
+  }
+  function throwStone() {
+    const f = fwd(), m = new THREE.Mesh(stoneGeo, stoneMat); m.castShadow = true; scene.add(m);
+    m.position.copy(camera.position).addScaledVector(f, 0.4); m.position.y -= 0.45;
+    const sp = rnd(9, 12.5);
+    thrown.push({ kind: 'stone', m, v: new V3(f.x * sp, rnd(-0.6, 0.6), f.z * sp), skips: 0, t: 0, done: 0 });
+  }
+
+  // ----- where am I? -----
+  const nearFire = () => { const d = Math.hypot(camera.position.x - FIRE.x, camera.position.z - FIRE.z); return d > 0.9 && d < 2.8; };
+  const nearBank = () => { if (pond.depthAt(camera.position.x, camera.position.z)) return false;
+    if (Math.hypot(camera.position.x - fishing.seat.x, camera.position.z - fishing.seat.z) < 3.2) return false;
+    const f = fwd(); for (const d of [1, 2, 3, 4, 5]) if (pond.depthAt(camera.position.x + f.x * d, camera.position.z + f.z * d)) return true; return false; };   // water within 5 m ahead
+  const nearBlanket = () => Math.hypot(camera.position.x - BL[0], camera.position.z - BL[1]) < 1.8;
+  const rig = life.car, rearSpot = () => _p.set(0, 0, -3.1).applyMatrix4(rig.g.matrixWorld);
+  const nearTail = () => !car?.active && Math.abs(car?.speed || 0) < 0.1 && flat(_r.copy(rearSpot()).sub(camera.position).setY(0)) < 1.5;
+
+  // ----- seated / lying activities -----
+  const SEATED = {
+    roast: { start() { roast = 0; stick.visible = mallow.visible = true; mallowMat.emissiveIntensity = 0; },
+      hud: () => TOUCH ? 'Roasting… <button data-act="pull">🍡 Pull it out</button>' : 'Roasting… <kbd>E</kbd> pull it out · <kbd>R</kbd> add a log' },
+    stars: { start() { const r = blanket.rotation.y; camera.position.set(BL[0] - Math.sin(r) * 0.62, 0.32, BL[1] - Math.cos(r) * 0.62); camera.rotation.set(1.15, r + Math.PI, 0, 'YXZ'); },
+      hud: () => (isNight ? 'Stargazing' : 'Cloud watching') + (TOUCH ? '' : ' · <kbd>E</kbd> get up') },
+    tail: { start() { rig.g.updateMatrixWorld(); camera.position.copy(_p.set(0.05, 1.2, -1.95).applyMatrix4(rig.g.matrixWorld)); camera.rotation.set(-0.05, rig.g.rotation.y + Math.PI + Math.PI, 0, 'YXZ'); tailWant = 1; },
+      hud: () => 'Sitting in the back' + (TOUCH ? '' : ' · <kbd>E</kbd> get out') },
+  };
+  let tailWant = 0, tailOpen = 0;
+  function begin(kind) {
+    cur = kind; back = camera.position.clone(); releaseKeys(); if (fpControls.isLocked && kind !== 'roast') fpControls.unlock();
+    walkHint.style.display = 'none'; document.getElementById('osLeft').style.visibility = 'hidden';
+    exitBtn.textContent = '✕ Stand up'; exitBtn.style.display = 'block';
+    SEATED[kind].start(); say(SEATED[kind].hud());
+  }
+  function end(rate) {
+    if (!cur) return;
+    if (cur === 'roast') {
+      stick.visible = mallow.visible = mFlame.visible = false;
+      if (rate) { const r = roast, msg = r < 0.35 ? 'Barely warm 🍡' : r < 0.6 ? 'Lightly toasted 🍡' : r < 0.82 ? 'Perfect golden marshmallow! 🏆' : r < 1.0 ? 'Well done — a bit dark 🍡' : 'Burnt to a crisp 🔥';
+        if (r >= 0.6 && r < 0.82) perfect++; toast(msg + (perfect > 1 && r >= 0.6 && r < 0.82 ? ` (${perfect} perfect)` : '')); }
+    }
+    if (cur === 'tail') tailWant = 0;
+    if (cur !== 'roast') { camera.position.copy(back); camera.position.y = EYE_H; camera.rotation.set(0, camera.rotation.y, 0, 'YXZ'); }
+    if (cur === 'roast') camera.position.y = EYE_H;
+    cur = null; hush(); exitBtn.style.display = 'none'; document.getElementById('osLeft').style.visibility = '';
+    walkHint.style.display = 'block'; updateOS();
+  }
+  function onE() {
+    if (cur) { end(true); return true; }
+    if (!onFoot()) return false;
+    if (nearFire()) { begin('roast'); return true; }
+    if (nearBank()) { throwStone(); return true; }
+    if (nearBlanket()) { begin('stars'); return true; }
+    if (nearTail()) { begin('tail'); return true; }
+    return false;
+  }
+  function onR() { if ((cur === 'roast' || (onFoot() && nearFire())) && thrown.filter(t => t.kind === 'log').length < 2) { throwLog(); return true; } return false; }
+  function act(a) { if (a === 'roast' || a === 'pull' || a === 'stone' || a === 'lie' || a === 'sit') onE(); else if (a === 'log') onR(); }
+
+  function update(t, dt) {
+    // thrown logs (arc onto the fire) and stones (skip across the water)
+    for (let i = thrown.length - 1; i >= 0; i--) {
+      const o = thrown[i];
+      if (o.kind === 'log') {
+        o.t += dt / 0.8; const u = Math.min(1, o.t);
+        o.m.position.lerpVectors(o.from, o.to, u); o.m.position.y += Math.sin(Math.PI * u) * 0.9; o.m.rotation.set(o.t * o.spin, 0.3, o.t * 2);
+        if (u >= 1) { scene.remove(o.m); campfire.addLog(); thrown.splice(i, 1); }
+      } else {
+        o.t += dt; o.v.y -= 9.8 * dt; o.m.position.addScaledVector(o.v, dt); o.m.rotation.y += dt * 25;
+        const w = pond.depthAt(o.m.position.x, o.m.position.z);
+        if (!o.done && o.m.position.y <= (w ? w.waterY : 0.02)) {
+          const spd = Math.hypot(o.v.x, o.v.z);
+          if (w && spd > 3.2 && o.v.y > -7.5) {                                             // skip!
+            o.skips++; ripple(o.m.position.x, o.m.position.z, 1); o.m.position.y = w.waterY + 0.005;
+            o.v.y = rnd(1.2, 2.2) * spd / 10; const k = rnd(0.7, 0.86); o.v.x *= k; o.v.z *= k;
+          } else {
+            o.done = t; if (w) ripple(o.m.position.x, o.m.position.z, 1.8);
+            const n = o.skips, nb = n > best; if (nb) { best = n; try { localStorage.setItem('skipBest', String(best)); } catch {} }
+            toast(n === 0 ? (w ? 'Plop — no skips' : 'Missed the water') : `${n} skip${n > 1 ? 's' : ''}!` + (nb && n > 1 ? ' — new best 🏆' : best ? ` (best ${best})` : ''));
+          }
+        }
+        if (o.done && (t - o.done > 1.5 || pond.depthAt(o.m.position.x, o.m.position.z))) { scene.remove(o.m); thrown.splice(i, 1); }
+        else if (o.done) o.v.set(0, -0.6, 0);
+      }
+    }
+    for (let i = ripples.length - 1; i >= 0; i--) { const r = ripples[i]; r.t += dt;
+      r.m.scale.setScalar(1 + r.t * 9 * r.m.userData.big); r.m.material.opacity = 0.55 * Math.max(0, 1 - r.t / 1.4);
+      if (r.t > 1.4) { scene.remove(r.m); r.m.material.dispose(); ripples.splice(i, 1); } }
+    // the G-Class rear door
+    tailOpen += (tailWant - tailOpen) * Math.min(1, dt * 4); rig.rearPivot.rotation.y = 1.55 * tailOpen;
+    // constellations + shooting stars while lying on the blanket at night
+    consts.visible = cur === 'stars' && isNight;
+    const sh = shooting;
+    if (consts.visible && t > sh.next && sh.t <= 0) {
+      const az = camera.rotation.y * 180 / Math.PI + 180 + rnd(-40, 40), el = rnd(35, 70);
+      sh.a.copy(toSky(az, el, 0, 0, 150)); sh.b.copy(toSky(az + rnd(-25, 25), el - rnd(8, 16), 0, 0, 150)); sh.t = 0.0001;
+    }
+    if (sh.t > 0) { sh.t += dt / 0.7; const u = Math.min(1, sh.t), pa = sh.line.geometry.attributes.position;
+      _p.lerpVectors(sh.a, sh.b, u); pa.setXYZ(1, _p.x, _p.y, _p.z); _p.lerpVectors(sh.a, sh.b, Math.max(0, u - 0.25)); pa.setXYZ(0, _p.x, _p.y, _p.z); pa.needsUpdate = true;
+      sh.line.material.opacity = Math.sin(Math.PI * u) * 0.9; if (u >= 1) { sh.t = 0; sh.line.material.opacity = 0; sh.next = t + rnd(3, 8); } }
+    // the running activity
+    if (cur === 'roast') {
+      // stick: from your hand (low right) to a point just above the flames, on the side toward you
+      const f = fwd(); _r.set(-f.z, 0, f.x);
+      const hand = _p.copy(camera.position).addScaledVector(f, 0.3).addScaledVector(_r, 0.22); hand.y -= 0.32;
+      const toMe = _f.set(camera.position.x - FIRE.x, 0, camera.position.z - FIRE.z).normalize();
+      const tip = new V3(FIRE.x + toMe.x * 0.16, 0.62 + campfire.boost * 0.1, FIRE.z + toMe.z * 0.16);
+      const d = tip.clone().sub(hand), L = d.length();
+      stick.scale.set(1, L, 1); stick.position.copy(hand).addScaledVector(d, 0.5); stick.quaternion.setFromUnitVectors(_c3.set(0, 1, 0), d.normalize());
+      mallow.position.copy(tip).addScaledVector(d, -0.03); mallow.quaternion.copy(stick.quaternion);
+      roast += dt / 9 * (1 + 0.6 * campfire.boost);
+      roastColor(Math.min(1.05, roast));
+      const onFire = roast > 1.05; mFlame.visible = onFire; mFlame.position.copy(mallow.position); mFlame.material.opacity = onFire ? 0.9 + Math.sin(t * 20) * 0.1 : 0;
+      mallowMat.emissiveIntensity = onFire ? 0.8 : 0;
+      camera.position.y += (1.15 - camera.position.y) * Math.min(1, dt * 3);                   // crouch by the fire
+      say(SEATED.roast.hud());
+    } else if (cur === 'tail') {
+      rig.g.updateMatrixWorld(); camera.position.copy(_p.set(0.05, 1.2, -1.95).applyMatrix4(rig.g.matrixWorld));
+    } else if (cur === 'stars') say(SEATED.stars.hud());
+    if (cur) return;
+    // prompts
+    if (!onFoot()) { hush(); return; }
+    if (nearFire()) say(TOUCH ? '<button data-act="roast">🍡 Roast a marshmallow</button> <button data-act="log">🪵 Add a log</button>' : '<kbd>E</kbd> roast a marshmallow · <kbd>R</kbd> add a log');
+    else if (nearBank()) say(TOUCH ? '<button data-act="stone">🪨 Skip a stone</button>' : '<kbd>E</kbd> skip a stone');
+    else if (nearBlanket()) say(TOUCH ? '<button data-act="lie">✨ Lie down</button>' : `<kbd>E</kbd> lie down and ${isNight ? 'stargaze' : 'watch the clouds'}`);
+    else if (nearTail()) say(TOUCH ? '<button data-act="sit">🚙 Sit in the back</button>' : '<kbd>E</kbd> open the back and sit');
+    else hush();
+  }
+  const _c3 = new V3();
+  return { update, onE, onR, act, end, get active() { return !!cur; }, get state() { return { cur, roast: +roast.toFixed(2), best, boost: +campfire.boost.toFixed(2), thrown: thrown.length }; }, blanket: BL };
+})();
+
 // ---------- CAMPERS (per user — "see people moving around", GitHub-Pages only, so they're simulated, not online
 // visitors). Low-poly people with jointed legs and arms walk a small path network over the open gravel/grass and
 // pick activities: warming hands at the fire, sitting at the picnic table, by the tent doors, looking at the pond,
@@ -7390,7 +7636,7 @@ let dockCloth = null;
 
 relayout();
 window.__scene = scene; window.__camera = camera; window.__controls = controls; window.__renderer = renderer; // debug handles (MCP / console)
-window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun };                                       // profiling handles
+window.__perf = { stages: stageTimes, life, campers, pond, campfire, sun, get acts() { return acts; } };                                       // profiling handles
 
 function updateCoverage() {
   const xC = gap / 2 + W / 2;                    // tent centerline (= its roof ridge x)
@@ -7438,8 +7684,8 @@ document.getElementById('rainOn').addEventListener('change', e => { raining = e.
 document.getElementById('soundOn').addEventListener('change', e => life.setSound(e.target.checked));
 document.getElementById('campersOn').addEventListener('change', e => campers.setOn(e.target.checked));
 document.getElementById('fishHud').addEventListener('click', () => fishing.onE()); // tap the pill = E (touch screens)
-document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else if (car?.active) car.onE(); else hammock?.stop(); }); // stand up / get out (touch has no Esc / WASD)
-document.getElementById('actHud').addEventListener('click', e => { const o = e.currentTarget.dataset.owner; if (o === 'car') { if (e.target.dataset.act) car.act(e.target.dataset.act); else car.onE(); } else if (o === 'deer') life.deerOnE(); else if (o === 'rabbit') life.rabbitOnE(); else hammock?.onE(); }); // tap the pill = E
+document.getElementById('fishExit').addEventListener('click', () => { if (fishing.active) fishing.stop(); else if (car?.active) car.onE(); else if (acts?.active) acts.end(true); else hammock?.stop(); }); // stand up / get out (touch has no Esc / WASD)
+document.getElementById('actHud').addEventListener('click', e => { const o = e.currentTarget.dataset.owner; if (o === 'act') { if (e.target.dataset.act) acts.act(e.target.dataset.act); else acts.onE(); return; } if (o === 'car') { if (e.target.dataset.act) car.act(e.target.dataset.act); else car.onE(); } else if (o === 'deer') life.deerOnE(); else if (o === 'rabbit') life.rabbitOnE(); else hammock?.onE(); }); // tap the pill = E
 // ---- share the current view as a link / save a photo (GitHub-Pages-only, no server) ----
 const toast = msg => { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
 const viewLink = () => {
@@ -7588,11 +7834,14 @@ renderer.setAnimationLoop(() => {
   fishing?.update(dt);                        // fishing spot: prompt, cast/bite/reel, seated camera
   hammock?.update();                          // hammock: prompt, or ride the rocking sling while lying in it
   car?.update(dt);                            // the G-Class: prompt, door, driving, chase camera
+  acts?.update(clock.elapsedTime, dt);        // activities: marshmallows, logs, stones, stargazing, the car's back
   // WASD walk mode (keyboard, mouse look, or on-screen controls)
   if (fishing?.active) {
     // sitting on the fishing stool: the fishing spot drives the camera
   } else if (car?.active) {
     // driving: the car module moves the car and places the camera (car.update below)
+  } else if (acts?.active) {
+    // roasting / stargazing / sitting in the car's back: feet stay put (acts.update places the camera); look stays free
   } else if (hammock?.active) {
     // lying in the hammock: position rides the sling (hammock.update); mouse lock / drag-to-look still turn the view
   } else if (walking) {
@@ -7680,7 +7929,7 @@ renderer.setAnimationLoop(() => {
   }
   const t = performance.now() * 0.001;
   campfire.update(t, dt, isNight);            // flames, embers, sparks, smoke
-  fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15);
+  fireLight.intensity = (isNight ? 2.6 : 1.2) * (0.85 + Math.sin(t * 17) * 0.15) * (1 + 0.7 * campfire.boost);
   pond.update(t, dt);                         // koi swim, ripples drift
   treeWind.value = t;                         // foliage sway
   life?.setSwim(swimMove);                    // water swish only while moving in the pond
