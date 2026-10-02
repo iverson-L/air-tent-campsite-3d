@@ -6272,8 +6272,12 @@ life = (() => {
       if (sx > 0) box(0.012, 0.035, 1.0, black, HW + 0.006, 1.0, 0.04);                                   // rub strip, passenger door
       box(0.012, 0.03, 1.2, black, sx * (HW + 0.006), 1.15, 1.45);                                        // wing strip
       for (const z of (sx > 0 ? [-0.4, -1.42] : [-1.42])) box(0.03, 0.025, 0.14, black, sx * (HW + 0.012), 1.12, z);   // handles
-      box(0.04, 0.03, 0.12, black, sx * (HW + 0.03), 1.38, 0.5);                                          // mirror arm
-      box(0.08, 0.15, 0.22, black, sx * (HW + 0.1), 1.42, 0.47, g, 0.03);                                // mirror head
+      // mirror (per user: check all mirrors): the head was a slab running fore-aft along the side — a mirror is wide
+      // outward, tall and thin fore-aft, with its glass facing back; a short arm from the door's front corner holds it
+      box(0.1, 0.035, 0.05, black, sx * (HW + 0.05), 1.36, 0.52);                                         // arm
+      box(0.2, 0.15, 0.08, black, sx * (HW + 0.18), 1.42, 0.5, g, 0.025);                                // head
+      { const mg = new THREE.Mesh(new THREE.PlaneGeometry(0.17, 0.12), new THREE.MeshStandardMaterial({ color: 0x1a2228, roughness: 0.05, metalness: 0.8 }));
+        mg.position.set(sx * (HW + 0.18), 1.42, 0.459); mg.rotation.y = Math.PI; g.add(mg); }                // glass, facing back
       const ind = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.06, 4, 8), amber); ind.rotation.x = Math.PI / 2; ind.position.set(sx * 0.8, 1.235, ZF - 0.18); g.add(ind);   // indicator bullet
     }
     box(2 * HW + 0.08, 0.3, 0.28, black, 0, 0.64, ZF + 0.07, g, 0.04);                                     // front bumper
@@ -6314,7 +6318,7 @@ life = (() => {
     g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
     carRig = { g, doorPivot, rearPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat,
-      WB: 2.89, MAXF: 12.5, R: 1.0, circles: [-1.45, 0, 1.45], doorLocal: [-1.55, 0, 0.1], camDist: 6.4, ev: false, name: 'G-Class' };
+      WB: 2.89, MAXF: 12.5, ACC: 4.2, BRK: 9, R: 1.0, circles: [-1.45, 0, 1.45], doorLocal: [-1.55, 0, 0.1], camDist: 6.4, ev: false, name: 'G-Class' };
   }
   // ===== Tesla Cybertruck (per user, from two photos): 568.3 cm long, 220.1 cm wide (241.3 with mirrors), ~185 cm
   //       tall, wheelbase 3.81 m, 35" tyres. Parked beside the G-Class and drivable the same way (E at the driver's
@@ -6330,36 +6334,63 @@ life = (() => {
     const steel = new THREE.MeshStandardMaterial({ color: 0xc9ccce, roughness: 0.34, metalness: 0.45 });   // brushed stainless (no env map: high metalness rendered near-black)
     const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x0f1316, roughness: 0.08, metalness: 0.6 });
+    const wellMat = new THREE.MeshStandardMaterial({ color: 0x0e0f10, roughness: 0.95, side: THREE.DoubleSide });
+    const mirrorMat = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.6, side: THREE.DoubleSide });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, roughness: 0.45, metalness: 0.5 });
     const barMat = new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 0.2, emissive: 0xffffff, emissiveIntensity: 0.9 });   // the white bar IS the headlight (DRL)
     const tailMat = new THREE.MeshStandardMaterial({ color: 0x7a1010, roughness: 0.3, emissive: 0xff1a0a, emissiveIntensity: 0 });
-    const HL = 2.84, HW = 1.1, BELT = 1.27, TR = 0.44, AX = [1.905, -1.905], LEAN = 0.38;
+    // proportions measured off the user's side-view photo (276 px/m): short front overhang (0.76 m), long rear (1.13 m),
+    // roof apex 2.33 m back from the nose (z +0.51) at 1.86 m
+    const HL = 2.84, HW = 1.1, BELT = 1.27, TR = 0.44, AX = [2.08, -1.72], LEAN = 0.38, ZA = 0.51;
+    const archOf = a => [[a - 0.5, 0.6], [a - 0.3, 0.95], [a + 0.3, 0.95], [a + 0.5, 0.6]];   // angular arch outline, hugging the tyre (per user: was too big; measured from the side photo)
     // The body is ONE closed loft of cross-sections along z (per user: the first build had gaps, and a boxy bonnet).
-    // Each ring: vertical lower sides up to the crease, upper facets leaning in to the top. The crease is 1.27 m along
-    // the cabin and drops to the light bar (1.04 m) at the nose, so the bonnet gets the chamfered edges of the real
+    // Each ring: vertical lower sides up to the crease, upper facets leaning in to the top. The crease is one straight
+    // line rising from the nose's top edge (1.10 m) to 1.34 m at the tail (per user), so the bonnet gets the chamfered edges of the real
     // truck — flat top narrowing toward the windscreen, angled side faces. Shared ring vertices = no gaps; flat
     // shading keeps the facets crisp.
-    const crease = z => z >= 1.2 ? 1.04 + (HL - z) * ((BELT - 1.04) / (HL - 1.2)) : BELT;
-    const inset = (y, z) => y > crease(z) ? HW - LEAN * (y - crease(z)) : HW;   // half-width at height y (upper facets lean in)
-    const topY = z => z >= -0.1 ? 1.04 + (HL - z) * (0.86 / (HL + 0.1)) : 1.9 - (-0.1 - z) * (0.54 / (HL - 0.1));   // nose → apex → tail
+    // the crease (window sill line) rises from the light bar at the nose to ~1.40 m at the rear door, then eases to the tail
+    const lin = pts => z => { for (let i = 1; i < pts.length; i++) { const [z0, y0] = pts[i - 1], [z1, y1] = pts[i]; if (z >= z1 - 1e-9) return y0 + (y1 - y0) * (z - z0) / (z1 - z0); } return pts.at(-1)[1]; };
+    const crease = lin([[HL, 1.1], [-HL, 1.34]]);   // shoulder line: ONE straight line from the light bar to the tail (per user, ct_sideview.png)
+    const sill = z => crease(z) + 0.115;   // window sill: ONE straight line parallel to the crease, 11.5 cm up the facet, running to the quarter triangle's tip (per user)
+    // lower doors (per user, ct_sideview.png): between the arches the steel runs down to SILL_Y, its bottom part (below
+    // TK0) tucked in by TUCK so it reads darker, over a thin black rocker
+    const SILL_Y = 0.39, TK0 = 0.57, TUCK = 0.05, tuckAt = y => TUCK * Math.min(1, Math.max(0, (TK0 - y) / (TK0 - SILL_Y)));
+    const inset = (y, z) => y > crease(z) ? HW - LEAN * (y - crease(z)) : HW - tuckAt(y);   // half-width at height y (upper facets lean in, the foot tucks in)
+    const topY = lin([[HL, 1.1], [ZA, 1.86], [-HL, 1.39]]);            // nose → apex → tail
     // bottom line (z, y): angular wheel arches, the nose and tail undercuts
-    const prof = [[-HL, 0.62], [-2.66, 0.56]];
-    for (const a of [AX[1], AX[0]]) prof.push([a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]);
-    prof.push([2.7, 0.58], [HL, 0.72]);
+    const prof = [[-HL, 0.62], [-2.5, 0.59]];
+    prof.push(...archOf(AX[1]), [AX[1] + 0.62, SILL_Y], [AX[0] - 0.62, SILL_Y], ...archOf(AX[0]));   // the doors reach down to the rocker; arch legs carried down
+    prof.push([2.76, 0.62], [HL, 0.66]);
     const bottomY = z => { for (let i = 1; i < prof.length; i++) { const [z0, y0] = prof[i - 1], [z1, y1] = prof[i]; if (z <= z1 + 1e-9) return y0 + (y1 - y0) * (z - z0) / ((z1 - z0) || 1); } return 0.72; };
-    const zs = [...new Set([...prof.map(p => p[0]), -0.1, 1.2, ...Array.from({ length: 24 }, (_, i) => -HL + (i + 0.5) * (2 * HL) / 24)].map(z => +z.toFixed(4)))].sort((p, q) => p - q);
-    const ring = z => { const t = topY(z), c = Math.min(crease(z), t), b = bottomY(z), wt = HW - LEAN * (t - c);
-      return [[-HW, b, z], [-HW, c, z], [-wt, t, z], [wt, t, z], [HW, c, z], [HW, b, z]]; };
+    const zs = [...new Set([...prof.map(p => p[0]), ZA, 1.45, -0.76, ...Array.from({ length: 24 }, (_, i) => -HL + (i + 0.5) * (2 * HL) / 24), 2.58, ...Array.from({ length: 6 }, (_, i) => 2.58 + (i + 1) * 0.0433)].map(z => +z.toFixed(4)))].sort((p, q) => p - q);
+    // the nose (per user's top / front reference): a straight front edge, narrower than the body, with big diagonal
+    // corner facets — in plan the sides sweep in by CH over the last CL to the nose (half-width chamW(z))
+    // plan shape of the nose (per user, measured off ct_topview.png at ~290 px/m): the side stays ONE flat panel up to
+    // a short steep corner facet (CH across over CL along, ~57°) that runs to the 1.40 m wide front edge. Tapering the
+    // side ahead of the wheel creased the panel above the arch and twisted the flare (per user: "not match").
+    const TAIL_TILT = 0.06, CH = 0.40, CL = 0.26, NOSE_Z = [HL - CL];
+    const chamW = z => lin([[HL, HW - CH], [HL - CL, HW]])(Math.min(z, HL));
+    const ring = z => { const t = topY(z), c = Math.min(crease(z), t), b = bottomY(z), wt = HW - LEAN * (t - c), cw = chamW(z);
+      // the tail face leans (per user, side photo): its foot sits TAIL_TILT further forward than its top
+      const tz = y => z <= -HL + 1e-6 ? z + TAIL_TILT * (t - y) / (t - b) : z;
+      const k = Math.max(b, TK0), tk = tuckAt(b);
+      // where the nose chamfer (x = cw) cuts the leaning upper facet: without a ring point on that line the quads
+      // twisted into a bright sliver at the front corners (per user: "weird shape artifact")
+      const ys = Math.min(t, Math.max(c, c + (HW - cw) / LEAN)), xs = HW - LEAN * (ys - c);
+      return [[-HW + tk, b], [-HW, k], [-HW, c], [-xs, ys], [-wt, t], [0, t], [wt, t], [xs, ys], [HW, c], [HW, k], [HW - tk, b], [0, b]].map(([x, y]) => [Math.sign(x) * Math.min(Math.abs(x), cw), y, tz(y)]); };
     const pos = [], tri = (A, B, C) => pos.push(...A, ...B, ...C);
     for (let i = 1; i < zs.length; i++) { const r0 = ring(zs[i - 1]), r1 = ring(zs[i]);
-      for (let k = 0; k < 6; k++) { const k2 = (k + 1) % 6; tri(r0[k], r0[k2], r1[k2]); tri(r0[k], r1[k2], r1[k]); } }
+      for (let k = 0; k < r0.length; k++) { const k2 = (k + 1) % r0.length; tri(r0[k], r0[k2], r1[k2]); tri(r0[k], r1[k2], r1[k]); } }
     { const body = new THREE.BufferGeometry(); body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); body.computeVertexNormals();
-      const nx = body.attributes.normal.getX(0), px = body.attributes.position.getX(0);           // side faces must point out
-      if (nx * px < 0) { const pa = body.attributes.position.array; for (let i = 0; i < pa.length; i += 9) for (let k = 0; k < 3; k++) { const t = pa[i + 3 + k]; pa[i + 3 + k] = pa[i + 6 + k]; pa[i + 6 + k] = t; } body.computeVertexNormals(); }
+      // side faces must point out: judge by the first clearly side-facing triangle (some ring points coincide, so
+      // the very first triangle can be degenerate)
+      let flip = false; { const P = body.attributes.position, N = body.attributes.normal;
+        for (let i = 0; i < P.count; i += 3) { const nx = N.getX(i), px = (P.getX(i) + P.getX(i + 1) + P.getX(i + 2)) / 3; if (Math.abs(nx) > 0.7 && Math.abs(px) > 0.5) { flip = nx * px < 0; break; } } }
+      if (flip) { const pa = body.attributes.position.array; for (let i = 0; i < pa.length; i += 9) for (let k = 0; k < 3; k++) { const t = pa[i + 3 + k]; pa[i + 3 + k] = pa[i + 6 + k]; pa[i + 6 + k] = t; } body.computeVertexNormals(); }
       g.add(new THREE.Mesh(body, steel)); }
     { const cp = [], A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3();    // nose and tail faces, each turned to face out
       for (const [z, dir] of [[zs[0], -1], [zs.at(-1), 1]]) { const r = ring(z);
-        for (let k = 1; k < 5; k++) { A.set(...r[0]); B.set(...r[k]); C.set(...r[k + 1]);
+        for (let k = 1; k < r.length - 1; k++) { A.set(...r[0]); B.set(...r[k]); C.set(...r[k + 1]);
           const nz = B.clone().sub(A).cross(C.clone().sub(A)).z; cp.push(...(nz * dir > 0 ? [r[0], r[k], r[k + 1]] : [r[0], r[k + 1], r[k]]).flat()); } }
       const caps = new THREE.BufferGeometry(); caps.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3)); caps.computeVertexNormals();
       g.add(new THREE.Mesh(caps, steel)); }
@@ -6370,29 +6401,83 @@ life = (() => {
       if (sx > 0) { const ix = geo.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; } }   // face outward
       geo.computeVertexNormals(); const m = new THREE.Mesh(geo, mat); g.add(m); return m;
     };
-    // wheel-arch liners, black flares, sills
+    // wheel-arch liners, black flares, sills. The front ones follow the nose chamfer inward (per user, top and side
+    // photos): every outline gets a point where it crosses the chamfer's start, then each vertex is pulled in by it
+    const splitZC = pts => pts.flatMap((p, i) => { const q = pts[i + 1]; if (!q) return [p];
+      const cut = NOSE_Z.filter(zc => (p[0] - zc) * (q[0] - zc) < 0).sort((u, v) => (u - v) * Math.sign(q[0] - p[0]));
+      return [p, ...cut.map(zc => [zc, p[1] + (q[1] - p[1]) * (zc - p[0]) / (q[0] - p[0])])]; });
     for (const a of AX) {
-      const arch = [[a - 0.62, 0.56], [a - 0.38, 1.02], [a + 0.38, 1.02], [a + 0.62, 0.56]];
-      const liner = new THREE.Shape([...arch, ...arch.slice().reverse().map(([z, y]) => [z + Math.sign(z - a) * -0.03, y - 0.03])].map(([z, y]) => new THREE.Vector2(z, y)));
+      const arch = archOf(a), archS = splitZC(arch);
+      const liner = new THREE.Shape([...archS, ...archS.slice().reverse().map(([z, y]) => [z + Math.sign(z - a) * -0.03, y - 0.03])].map(([z, y]) => new THREE.Vector2(z, y)));
       const lg = new THREE.ExtrudeGeometry(liner, { depth: 2 * HW - 0.02, bevelEnabled: false }); lg.translate(0, 0, -HW + 0.01); lg.rotateY(-Math.PI / 2);
+      { const p = lg.attributes.position; for (let i = 0; i < p.count; i++) p.setX(i, Math.sign(p.getX(i)) * Math.min(Math.abs(p.getX(i)), chamW(p.getZ(i)) - 0.01)); lg.computeVertexNormals(); }
       g.add(new THREE.Mesh(lg, black));
-      const outer = [[a - 0.76, 0.5], [a - 0.46, 1.12], [a + 0.46, 1.12], [a + 0.76, 0.5]];
+      // inner wheel-well walls (per user: you could see straight through past the tyre): a dark plate inboard of each tyre,
+      // filling ONLY the arch opening above the body line (reaching lower it showed as black blocks beside the tyre)
+      for (const sx of [-1, 1]) {
+        const wg = new THREE.ShapeGeometry(new THREE.Shape(arch.map(([z, y]) => new THREE.Vector2(z, y)))), wp = wg.attributes.position;
+        for (let i = 0; i < wp.count; i++) wp.setXYZ(i, sx * 0.7, wp.getY(i), wp.getX(i));
+        wg.computeVertexNormals(); g.add(new THREE.Mesh(wg, wellMat));
+      }
+      // ~10 cm black flare; its legs carry the arch line down and end square — the legs facing the doors run down to the
+      // rocker (SILL_Y), the front arch's front leg stops on the bumper top (0.70 m, per the photos), the tail one at 0.5 m
+      const dn = a > 0 ? -1 : 1, leg = (sg, o) => sg === dn ? [a + sg * (o ? 0.682 : 0.62), SILL_Y] : a > 0 ? [a + sg * (o ? 0.554 : 0.466), 0.66] : [a + sg * (o ? 0.63 : 0.557), 0.5];
+      const outer = splitZC([leg(-1, 1), [a - 0.37, 1.05], [a + 0.37, 1.05], leg(1, 1)]);
+      const inner = splitZC([leg(-1, 0), ...(a > 0 ? arch.slice(0, 3) : arch), leg(1, 0)]);
       for (const sx of [-1, 1]) {                                       // +x side: shape x = −z, rotated +90°; −x side: shape x = z, −90°
-        const fl = new THREE.Shape([...outer, ...arch.slice().reverse()].map(([z, y]) => new THREE.Vector2(sx > 0 ? -z : z, y)));
+        const fl = new THREE.Shape([...outer, ...inner.slice().reverse()].map(([z, y]) => new THREE.Vector2(sx > 0 ? -z : z, y)));
         const fg = new THREE.ExtrudeGeometry(fl, { depth: 0.07, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008, bevelSegments: 1 });
         fg.rotateY(sx > 0 ? Math.PI / 2 : -Math.PI / 2);                  // extrusion → outward
         const f = new THREE.Mesh(fg, black); f.position.x = sx * (HW - 0.02); g.add(f);
       }
     }
     const box = (w, h, d, mat, x, y, z, parent = g, r = 0.02) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), mat); m.position.set(x, y, z); parent.add(m); return m; };
-    for (const sx of [-1, 1]) box(0.1, 0.12, 2.5, black, sx * (HW + 0.02), 0.58, 0);                       // sills / steps
-    box(2.26, 0.32, 0.34, black, 0, 0.56, 2.72, g, 0.04);                                                   // front bumper
-    box(1.3, 0.1, 0.03, new THREE.MeshStandardMaterial({ color: 0x0b0c0d, roughness: 0.9 }), 0, 0.56, 2.895); // grille band
-    for (const sx of [-1, 1]) box(0.34, 0.018, 0.02, barMat, sx * 0.72, 0.745, HL + 0.006, g, 0.006);       // lower lamp slits
-    box(2.26, 0.3, 0.32, black, 0, 0.58, -2.74, g, 0.04);                                                   // rear bumper
-    box(0.9, 0.06, 0.12, black, 0, 0.45, -2.86, g, 0.02);                                                   // step
+    // thin black rocker under the doors (ct_sideview.png: ~0.26–0.39 m), 1 cm proud of the tucked door foot
+    { const z0 = AX[1] + 0.64, z1 = AX[0] - 0.64; for (const sx of [-1, 1]) box(0.07, 0.13, z1 - z0, black, sx * (HW - TUCK - 0.025), SILL_Y - 0.065, (z0 + z1) / 2, g, 0.015); }
+    // front bumper (per user, side photo + ct_43view.png): a boxy black block — a tall, near-vertical front face (0.66 →
+    // 0.36 m, a small chamfer to the 0.28 m underside), nearly full width (±0.93) with only a SHORT diagonal corner back
+    // to full width by z 2.68, then straight back to the wheel. Clamping it to the steel nose's steep corner made an odd
+    // downward wedge at the corner (per user).
+    { const bumpW = z => lin([[2.9, 0.93], [2.68, HW]])(Math.min(z, 2.9));
+      // built as a PLAN outline extruded straight up (0.28 → 0.66 m): every face planar. Clamping an extruded side
+      // profile instead twisted its end faces into a broken-looking spike by the wheel (per user).
+      const plan = [[-HW, 2.56], [HW, 2.56], [HW, 2.68], [bumpW(2.9), 2.88], [-bumpW(2.9), 2.88], [-HW, 2.68]];
+      const bg = new THREE.ExtrudeGeometry(new THREE.Shape(plan.map(([x, z]) => new THREE.Vector2(x, -z))), { depth: 0.38 - 0.024, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 });
+      bg.rotateX(-Math.PI / 2); bg.translate(0, 0.28 + 0.012, 0); bg.computeVertexNormals();
+      g.add(new THREE.Mesh(bg, black)); }
+    box(1.3, 0.1, 0.03, new THREE.MeshStandardMaterial({ color: 0x0b0c0d, roughness: 0.9 }), 0, 0.56, 2.9); // grille band
+    // lower lamp units (per user: rework, compare the photo): at the foot of the steel face, near each corner, where it
+    // meets the black bumper — a glossy smoked-black lens housing set slightly into the panel, a thin white light line
+    // inside it (lit with the bar) and a short inner segment; the outer end follows the corner facet
+    const lensDark = new THREE.MeshStandardMaterial({ color: 0x0b0d10, roughness: 0.12, metalness: 0.5 });
+    // per ct_43view.png (per user: reposition): at the very foot of the steel face, on the bumper top — a white bar
+    // ALONG each corner facet with an amber marker at its rear end, and a row of LED dots on the front face beside the
+    // corner, all in a thin dark strip. onCorner places a box at fraction t along the corner facet (nose → rear end).
+    const XN = chamW(HL), cL = Math.hypot(CH, CL), cnx = CL / cL, cnz = CH / cL, cAng = Math.atan2(CL, CH);
+    const onCorner = (t, y, w, h, d, mat, sx, off) => { const m = box(w, h, d, mat, sx * (XN + t * CH + off * cnx), y, HL - t * CL + off * cnz, g, Math.min(0.004, h / 2)); m.rotation.y = sx * cAng; return m; };
+    const amberMat = new THREE.MeshStandardMaterial({ color: 0xb06a10, emissive: 0xff8a10, emissiveIntensity: 0.35, roughness: 0.3 });
+    for (const sx of [-1, 1]) {
+      box(0.36, 0.036, 0.012, lensDark, sx * (XN - 0.17), 0.682, HL + 0.004, g, 0.004);                      // dark strip on the face
+      onCorner(0.5, 0.682, cL + 0.01, 0.036, 0.012, lensDark, sx, 0.004);                                     // ... and along the corner
+      for (let k = 0; k < 7; k++) box(0.022, 0.012, 0.008, barMat, sx * (XN - 0.03 - k * 0.045), 0.682, HL + 0.011, g, 0.003);   // LED dots
+      onCorner(0.42, 0.683, cL * 0.68, 0.014, 0.008, barMat, sx, 0.011);                                       // white bar on the corner facet
+      onCorner(0.9, 0.683, 0.035, 0.016, 0.008, amberMat, sx, 0.011);                                          // amber marker at its rear end
+    }
+    // rear bumper (per user, side photo): a wedge in side view — flat top at 0.68 m, a short rear face leaning like the
+    // tailgate, and the underside rising from 0.37 m by the wheel to 0.53 m at the tail (the departure angle)
+    { const pr = [[-2.24, 0.4], [-2.24, 0.68], [-2.865, 0.68], [-2.845, 0.53], [-2.3, 0.37]];
+      const bg = new THREE.ExtrudeGeometry(new THREE.Shape(pr.map(([z, y]) => new THREE.Vector2(-z, y))), { depth: 2.2, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 });
+      bg.translate(0, 0, -1.1); bg.rotateY(Math.PI / 2); g.add(new THREE.Mesh(bg, black)); }
     // light bars: full-width white at the nose, red across the tail
-    box(2.02, 0.024, 0.03, barMat, 0, 1.035, HL + 0.012, g, 0.01);
+    // light bar (per user: reposition, ct_43view.png): level, just under the bonnet's front edge, across the face and
+    // along both corner facets, in a dark band
+    { const zE = HL - CL + 0.02, xE = chamW(zE), nx = cnx, nz = cnz, rise = topY(zE) - topY(HL);   // the corner facet's top edge is the top line   // per ct_43view.png: LEVEL, 3.5 cm under the bonnet's front edge, in a dark band
+      for (const [y, h, o, mat] of [[topY(HL) - 0.04, 0.06, 0.004, lensDark], [topY(HL) - 0.036, 0.018, 0.011, barMat]]) {
+        const pts = [[-xE - o * nx, y + rise, zE + o * nz], [-XN - o * nx, y, HL + o * nz], [XN + o * nx, y, HL + o * nz], [xE + o * nx, y + rise, zE + o * nz]].map(([x, y, z]) => new THREE.Vector3(x, y, z));   // ends follow the rising edge (per user)
+        for (let i = 1; i < pts.length; i++) {                           // flat segments with a little overlap at the joins
+          const a = pts[i - 1], b = pts[i], d = b.clone().sub(a), seg = new THREE.Mesh(new THREE.BoxGeometry(d.length() + 0.012, h, 0.012), mat);
+          seg.position.copy(a).addScaledVector(d, 0.5); seg.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), d.normalize()); g.add(seg);
+        } } }
     box(2.08, 0.03, 0.03, tailMat, 0, 1.335, -HL - 0.012, g, 0.01);
     // dark glass on the facets: windscreen, roof glass behind the apex, side windows (front + rear door)
     const onTop = (z0, z1, m0, m1, mat) => {                            // a quad lying on the top skin between z0 and z1
@@ -6401,44 +6486,118 @@ life = (() => {
       if (geo.attributes.normal.getY(0) < 0) { geo.setIndex([0, 2, 1, 1, 2, 3]); geo.computeVertexNormals(); }
       const msh = new THREE.Mesh(geo, mat); g.add(msh); return msh;
     };
-    onTop(1.55, -0.04, 0.1, 0.08, dark);                                                                    // windscreen
-    onTop(-0.18, -1.12, 0.1, 0.1, dark);                                                                    // roof glass
+    // windscreen + roof glass (per user: rework, thin bezel): glass panels lying on the top skin, only 2.5 cm in from
+    // the edges, the windscreen's front edge arching forward at the centre (as in the top view), a thin bar at the apex
+    const glassTop = (zfC, zfS, zb, m, mat, dy = 0.009) => {                        // zfC / zfS: front edge at the centre / sides
+      const M = 14, N = 10, pos = [], idx = [];
+      for (let i = 0; i <= N; i++) for (let j = 0; j <= M; j++) {
+        const u = j / M * 2 - 1, zf = zfS + (zfC - zfS) * (1 - u * u), z = zf + (zb - zf) * i / N, y = topY(z) + dy;
+        pos.push(u * (inset(topY(z), z) - m), y, z);
+      }
+      for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b = a + 1, c = a + M + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      if (geo.attributes.normal.getY(0) < 0) { geo.index.array.reverse(); geo.computeVertexNormals(); }
+      const msh = new THREE.Mesh(geo, mat); g.add(msh); return msh;
+    };
+    // per user (ct_topview.png): no steel between the glass panels — one gloss-black frame under the windscreen and
+    // roof glass, from the windscreen's front edge back to the vault, so the apex bar and the 10 cm strip behind the
+    // roof glass read black; only the thin side bezels stay steel
+    { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2 });   // split at the apex, or the ridge pokes through
+      glassTop(2.04, 2.04, ZA, 0.025, fm, 0.006); glassTop(ZA, ZA, -0.84, 0.025, fm, 0.006); }
+    glassTop(2.04, 2.04, ZA + 0.03, 0.025, dark);                                                           // windscreen: straight front edge (ct_topview / ct_43view)
+    glassTop(ZA - 0.03, ZA - 0.03, -0.74, 0.025, dark);                                                     // roof glass
     const vault = (() => {                                              // black slatted vault cover
       const c = document.createElement('canvas'); c.width = 32; c.height = 256; const x = c.getContext('2d');
       x.fillStyle = '#1c1d1f'; x.fillRect(0, 0, 32, 256); for (let i = 0; i < 256; i += 8) { x.fillStyle = '#0e0f10'; x.fillRect(0, i, 32, 2); }
       const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0.3 }); })();
-    { const m = onTop(-1.2, -HL + 0.04, 0.12, 0.12, vault); const uv = []; for (const v of [[0, 0], [1, 0], [0, 1], [1, 1]]) uv.push(...v); m.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); }
-    const sideWin = (poly, sx) => panel(poly, sx, dark, 0.006);
+    { const m = onTop(-0.86, -HL + 0.04, 0.12, 0.12, vault); const uv = []; for (const v of [[0, 0], [1, 0], [0, 1], [1, 1]]) uv.push(...v); m.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); }
+    const sideWin = (poly, sx) => panel(poly, sx, dark, 0.009);
+    // window band (per user, ct_sideview.png): the whole greenhouse side is BLACK — no steel between the panes — from
+    // the sill up to just under the roof edge, with the glass laid on it. Its top is ONE straight line from the quarter
+    // triangle's tip (z 2.2, on the sill) up to the roof apex, shared by the quarter glass and the front door glass.
+    const lo = z => sill(z) + 0.005, ZT = 2.2;
+    const bandTop = z => z >= ZA ? lo(ZT) + (topY(ZA) - 0.015 - lo(ZT)) * (ZT - z) / (ZT - ZA) : topY(z) - 0.015;
+    const cy = z => sill(z) + 0.02, ty = z => bandTop(z) - 0.02;
+    let zq = ZT; while (ty(zq) - cy(zq) < 0.01) zq -= 0.005;                                              // glass tip, just inside the band's
+    const winQ = [[zq, cy(zq)], [1.34, cy(1.34)], [1.34, ty(1.34)]];                                       // quarter glass (triangle)
+    const winF = [[1.30, cy(1.30)], [0.37, cy(0.37)], [0.37, ty(0.37)], [ZA, ty(ZA)], [1.30, ty(1.30)]];   // front door window
+    const winR = [[0.23, cy(0.23)], [-0.72, cy(-0.72)], [-0.72, ty(-0.72)], [0.23, ty(0.23)]];              // rear door window
+    const bandMat = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2 });
+    const bandF = [[ZT, lo(ZT)], [1.45, lo(1.45)], [1.43, lo(1.43)], [1.43, bandTop(1.43)]];
+    const bandD = [[1.42, lo(1.42)], [0.31, lo(0.31)], [0.31, bandTop(0.31)], [ZA, bandTop(ZA)], [1.42, bandTop(1.42)]];
+    const bandR = [[0.3, lo(0.3)], [-0.76, lo(-0.76)], [-0.76, bandTop(-0.76)], [0.3, bandTop(0.3)]];
     for (const sx of [-1, 1]) {
-      if (sx > 0) sideWin([[1.5, 1.33], [0.0, 1.33], [0.0, topY(0) - 0.07], [1.22, topY(1.22) - 0.06]], sx);   // front (passenger side)
-      sideWin([[-0.1, 1.33], [-1.15, 1.33], [-1.15, topY(-1.15) - 0.07], [-0.1, 1.83]], sx);                    // rear door
-      box(0.012, 0.66, 0.012, new THREE.MeshStandardMaterial({ color: 0x5c6064, roughness: 0.5 }), sx * (HW + 0.002), 0.93, -1.2);   // rear door seam
-      box(0.13, 0.12, 0.22, black, sx * (HW + 0.1), 1.4, 1.32, g, 0.03); box(0.12, 0.03, 0.06, black, sx * (HW + 0.03), 1.38, 1.36);   // mirror
+      // windows sit on the crease line: a front quarter triangle, the front door window (driver's moves with the door), rear door
+      panel(bandF, sx, bandMat, 0.005); panel(bandR, sx, bandMat, 0.005); if (sx > 0) panel(bandD, sx, bandMat, 0.005);
+      sideWin(winQ, sx);
+      if (sx > 0) sideWin(winF, sx);
+      sideWin(winR, sx);
+      // mirror (per user, from the izmo side view ct_sideview.png): an angular black wedge sitting on the crease over the
+      // joint between the quarter triangle and the door glass — raked back in side view (z 1.40 → 1.10, ~18 cm tall),
+      // a skewed parallelogram in front view (outer end higher), tapering outward, its dark glass facing back
+      { const c = sill(1.3), xin = (y, z) => inset(y, z) + 0.01, xo = xin(c, 1.3) + 0.22;
+        // per user (ct_43view.png: "an outward pointy triangle", then "over pointy"): seen from the front it tapers from
+        // 15 cm tall at the door to a BLUNT 6 cm end 22 cm out; its front face rakes back, the glass fills the rear face
+        const P = { rbf: [xin(c + 0.02, 1.36), c + 0.02, 1.36], rtf: [xin(c + 0.17, 1.3), c + 0.17, 1.3], rbr: [xin(c + 0.02, 1.16), c + 0.02, 1.16],
+          rtr: [xin(c + 0.17, 1.16), c + 0.17, 1.16], tfb: [xo, c + 0.04, 1.21], tft: [xo, c + 0.1, 1.19], trb: [xo, c + 0.04, 1.15], trt: [xo, c + 0.1, 1.15] };
+        const V = k => new THREE.Vector3(sx * P[k][0], P[k][1], P[k][2]);
+        const faces = [['rbf', 'rtf', 'rtr', 'rbr'], ['rbr', 'rtr', 'trt', 'trb'], ['rbf', 'rtf', 'tft', 'tfb'], ['rtf', 'rtr', 'trt', 'tft'], ['rbf', 'rbr', 'trb', 'tfb'], ['tfb', 'tft', 'trt', 'trb']].map(f => f.map(V));
+        const mid = Object.keys(P).map(V).reduce((a, b) => a.add(b), new THREE.Vector3()).multiplyScalar(1 / 8), solid = [];
+        for (const f of faces) {                                          // fan each face, turned to point away from the middle
+          const fc = f.reduce((a, b) => a.clone().add(b)).multiplyScalar(1 / f.length), n = f[1].clone().sub(f[0]).cross(f[2].clone().sub(f[0]));
+          const pts = n.dot(fc.clone().sub(mid)) > 0 ? f : f.slice().reverse();
+          for (let i = 1; i < pts.length - 1; i++) solid.push(pts[0], pts[i], pts[i + 1]);
+        }
+        const hg = new THREE.BufferGeometry().setFromPoints(solid); hg.computeVertexNormals(); g.add(new THREE.Mesh(hg, mirrorMat));
+        box(0.05, 0.02, 0.1, black, sx * (xin(c, 1.3) + 0.02), c + 0.02, 1.26, g, 0.008);                       // slim foot on the door
+        // glass on the rear face, 18% in from its edges, 4 mm proud, facing back
+        const q = ['rbr', 'rtr', 'trt', 'trb'].map(V), ctr = q.reduce((a, b) => a.clone().add(b)).multiplyScalar(1 / 4);
+        const nn = q[1].clone().sub(q[0]).cross(q[2].clone().sub(q[0])).normalize(); if (nn.z > 0) nn.negate();
+        const v = q.map(p => p.clone().lerp(ctr, 0.18).addScaledVector(nn, 0.004));
+        const ord = v[1].clone().sub(v[0]).cross(v[2].clone().sub(v[0])).dot(nn) > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
+        const gg = new THREE.BufferGeometry().setFromPoints(ord.map(i => v[i])); gg.computeVertexNormals(); g.add(new THREE.Mesh(gg, dark)); }
+    }
+    // doors (per user: "u didn't make the door model?"): shut lines round both doors on each side — the front door's
+    // front edge behind the front arch, the B-pillar, the rear door's rear edge — running from the sill up the
+    // vertical side, across the crease and up the leaning facet to the roof line, plus the sill line along the bottom.
+    // Drawn as thin dark strips lying on the surface. (The Cybertruck has no door handles.)
+    const seamMat = new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: 0.6, metalness: 0.4 }), _a = new THREE.Vector3(), _b = new THREE.Vector3();
+    const onSide = (z, y, sx) => new THREE.Vector3(sx * (inset(y, z) + 0.003), y, z);
+    const seam = (pts, sx) => { for (let i = 1; i < pts.length; i++) {
+      _a.copy(onSide(...pts[i - 1], sx)); _b.copy(onSide(...pts[i], sx)); const d = _b.clone().sub(_a), L = d.length();
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, L), seamMat); m.position.copy(_a).addScaledVector(d, 0.5);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d.normalize()); g.add(m); } };
+    const upTo = z => { const top = topY(z) - 0.035, c = crease(z), pts = [[z, SILL_Y], [z, TK0]]; if (c < top) pts.push([z, c]); pts.push([z, top]); return pts; };
+    for (const sx of [-1, 1]) {
+      seam([[1.43, SILL_Y], [1.43, TK0], [1.43, crease(1.43)], [1.43, cy(1.43)]], sx);   // front-door front edge, up the facet to the glass
+      for (const z of [0.3, -0.76]) seam(upTo(z), sx);                    // B-pillar, rear-door rear edge
     }
     // driver's door (RHD, local −x): its own steel panel + window, hinged at its front edge (z 1.28)
-    const doorPivot = new THREE.Group(); doorPivot.position.set(-HW, 0, 1.28); doorPivot.userData.dynamic = true; g.add(doorPivot);
-    { const lowerPoly = [[1.26, 0.58], [-0.08, 0.58], [-0.08, BELT], [1.26, BELT]];
-      const dp = panel(lowerPoly, -1, steel, 0.004); g.remove(dp); dp.position.set(HW, 0, -1.28); doorPivot.add(dp);
-      const dw = panel([[1.5, 1.33], [0.0, 1.33], [0.0, topY(0) - 0.07], [1.22, topY(1.22) - 0.06]], -1, dark, 0.01); g.remove(dw); dw.position.set(HW, 0, -1.28); doorPivot.add(dw);
-      const seam = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.66, 0.012), new THREE.MeshStandardMaterial({ color: 0x5c6064, roughness: 0.5 })); seam.position.set(-0.006, 0.93, -1.36); doorPivot.add(seam); }
+    const doorPivot = new THREE.Group(); doorPivot.position.set(-HW, 0, 1.43); doorPivot.userData.dynamic = true; g.add(doorPivot);
+    { const lowerPoly = [[1.42, TK0], [0.31, TK0], [0.31, crease(0.31)], [1.42, crease(1.42)]], footPoly = [[1.42, SILL_Y], [0.31, SILL_Y], [0.31, TK0], [1.42, TK0]];
+      for (const poly of [lowerPoly, footPoly]) { const dp = panel(poly, -1, steel, 0.004); g.remove(dp); dp.position.set(HW, 0, -1.43); doorPivot.add(dp); }
+      const up = panel([[1.42, crease(1.42)], [0.31, crease(0.31)], [0.31, lo(0.31)], [1.42, lo(1.42)]], -1, steel, 0.004); g.remove(up); up.position.set(HW, 0, -1.43); doorPivot.add(up);   // facet strip up to the glass
+      const db = panel(bandD, -1, bandMat, 0.008); g.remove(db); db.position.set(HW, 0, -1.43); doorPivot.add(db);
+      const dw = panel(winF, -1, dark, 0.012); g.remove(dw); dw.position.set(HW, 0, -1.43); doorPivot.add(dw); }
     // wheels: lathed 35" tyres with a dark 6-spoke rim (dynamic: they spin and steer when driven)
-    const tyreGeo = new THREE.LatheGeometry([[0.28, -0.15], [0.38, -0.16], [0.425, -0.14], [TR, -0.09], [TR, 0.09], [0.425, 0.14], [0.38, 0.16], [0.28, 0.15]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
+    // tyre lip (r 0.26) tucks over a rim that runs the full tyre width — a 2 cm see-through ring showed at the rim before
+    const tyreGeo = new THREE.LatheGeometry([[0.26, -0.15], [0.38, -0.16], [0.425, -0.14], [TR, -0.09], [TR, 0.09], [0.425, 0.14], [0.38, 0.16], [0.26, 0.15]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
     const wheels = [];
     for (const a of AX) for (const sx of [-1, 1]) {
-      const w = new THREE.Group(); w.position.set(sx * 0.9, TR, a); w.rotation.set(0, sx > 0 ? 0 : Math.PI, 0, 'YXZ'); w.userData.dynamic = true; g.add(w);
+      const w = new THREE.Group(); w.position.set(sx * 0.93, TR, a); w.rotation.set(0, sx > 0 ? 0 : Math.PI, 0, 'YXZ'); w.userData.dynamic = true; g.add(w);
       const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; w.add(t);
-      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.26, 24), rimMat); face.rotation.z = Math.PI / 2; w.add(face);
-      for (let k = 0; k < 6; k++) { const ang = k / 6 * Math.PI * 2, sp = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.24, 0.07), black); sp.position.set(0.135, Math.cos(ang) * 0.13, Math.sin(ang) * 0.13); sp.rotation.x = ang; w.add(sp); }
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.03, 12), black); cap.rotation.z = Math.PI / 2; cap.position.x = 0.15; w.add(cap);
+      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.275, 0.275, 0.31, 24), rimMat); face.rotation.z = Math.PI / 2; w.add(face);
+      for (let k = 0; k < 6; k++) { const ang = k / 6 * Math.PI * 2, sp = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.24, 0.07), black); sp.position.set(0.16, Math.cos(ang) * 0.13, Math.sin(ang) * 0.13); sp.rotation.x = ang; w.add(sp); }
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.03, 12), black); cap.rotation.z = Math.PI / 2; cap.position.x = 0.175; w.add(cap);
       wheels.push({ w, front: a > 0, sx, base: w.rotation.y });
     }
-    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-0.8, 0.8].map(x => [x, 1.03, HL + 0.06]));
+    const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-0.62, 0.62].map(x => [x, 1.03, HL + 0.06]));
     g.position.set(TRUCK_AT[0], 0, TRUCK_AT[1]); g.rotation.y = 0.12;
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && o.material === dark) o.castShadow = false; });
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
     truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, wheels, TR, beamGroup, beamMat, flareMat, seatEye: null,
-      WB: 3.81, MAXF: 16, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.55], camDist: 8, ev: true, name: 'Cybertruck' };
+      WB: 3.81, MAXF: 18, ACC: 7.8, BRK: 11, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.9], camDist: 8, ev: true, name: 'Cybertruck' };
   }
 
   // ===== boots + backpacks at the tent doors (children of the tents, so they move with the gap slider) =====
@@ -7377,8 +7536,8 @@ car = (() => {
     const throttle = Math.max(-1, Math.min(1, thr)), steerIn = Math.max(-1, Math.min(1, st));
     let acc = 0;
     if (handbrake) acc = -Math.sign(speed) * Math.min(Math.abs(speed) / dt, 10);
-    else if (throttle > 0.05) acc = speed < -0.2 ? 9 * throttle : 4.2 * throttle;              // brake if rolling back, else drive
-    else if (throttle < -0.05) acc = speed > 0.2 ? 9 * throttle : 2.6 * throttle;              // brake, then reverse
+    else if (throttle > 0.05) acc = speed < -0.2 ? rig.BRK * throttle : rig.ACC * throttle * (1 - 0.35 * speed / rig.MAXF);   // brake if rolling back, else drive
+    else if (throttle < -0.05) acc = speed > 0.2 ? rig.BRK * throttle : 2.6 * throttle;      // brake, then reverse
     else acc = -Math.sign(speed) * Math.min(Math.abs(speed) / dt, 1.2 + 0.04 * speed * speed); // coast: rolling resistance + drag
     speed = Math.max(-MAXR, Math.min(rig.MAXF, speed + acc * dt));
     brakeGlow += (((throttle < -0.05 && speed > 0.2) || (throttle > 0.05 && speed < -0.2) || handbrake ? 1 : 0) - brakeGlow) * Math.min(1, dt * 12);

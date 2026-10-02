@@ -36,6 +36,7 @@ An interactive 3D campsite preview of inflatable air tents (Block 10, Block 09, 
 | `block09_mock.html` | Block 09 (360 × 250 cm, back door, TPU roof window) |
 | `block05.html` | Block 05 (single-slope extension) |
 | `sofa_mock.html` | Inflatable sofa |
+| `cybertruck_mock.html` | Tesla Cybertruck sandbox |
 | `block10_05.html` | Block 10 + Block 05 docked |
 | `block10_09_05.html` | Block 10 + 09 + 05 with an open passage |
 
