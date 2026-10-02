@@ -6118,7 +6118,7 @@ life = (() => {
     const paint = new THREE.MeshStandardMaterial({ color: 0x6b8a2c, roughness: 0.38, metalness: 0.3, side: THREE.DoubleSide });
     const black = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.75 }), satin = new THREE.MeshStandardMaterial({ color: 0x232427, roughness: 0.45, metalness: 0.4 });
     const trim = new THREE.MeshStandardMaterial({ color: 0x2b2c2f, roughness: 0.85 }), seat = new THREE.MeshStandardMaterial({ color: 0x1f1d1c, roughness: 0.7 });
-    const glass = new THREE.MeshPhysicalMaterial({ color: 0x0f1518, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false });   // tinted, as in the photo
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0x3f5058, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });   // lighter tint (per user)
     const silver = new THREE.MeshStandardMaterial({ color: 0xd9dcdf, roughness: 0.25, metalness: 0.7 }), rimDark = new THREE.MeshStandardMaterial({ color: 0x8d9196, roughness: 0.35, metalness: 0.7 }), rubber = new THREE.MeshStandardMaterial({ color: 0x161617, roughness: 0.92 });
     const lensMat = new THREE.MeshStandardMaterial({ color: 0xdfe6ea, roughness: 0.15, metalness: 0.2, emissive: 0xfff4dd, emissiveIntensity: 0 });
     const tailMat = new THREE.MeshStandardMaterial({ color: 0x8e1414, roughness: 0.35, emissive: 0xff2010, emissiveIntensity: 0 });
@@ -6141,7 +6141,7 @@ life = (() => {
       return new THREE.Mesh(geo, mat);
     };
     const DOOR = [-0.52, 0.6];                                           // front door span (z)
-    const doorGlassGeo = (() => { const sh = new THREE.Shape([[DOOR[0] + 0.05, 1.27], [0.6, 1.27], [0.43, 1.86], [DOOR[0] + 0.05, 1.86]].map(([z, y]) => new THREE.Vector2(z, y)));
+    const doorGlassGeo = (() => { const sh = new THREE.Shape([[DOOR[0] - 0.03, 1.235], [0.64, 1.235], [0.44, 1.92], [DOOR[0] - 0.03, 1.92]].map(([z, y]) => new THREE.Vector2(z, y)));   // edges tuck under the A/B pillars, belt and roof
       const geo = new THREE.ShapeGeometry(sh); geo.rotateY(-Math.PI / 2); return geo; })();   // shape x → world z (plane at x = 0)
     for (const sx of [-1, 1]) {
       g.add(sidePiece(DOOR[1] + 0.012, ZF, sx));                         // front wing
@@ -6171,19 +6171,19 @@ life = (() => {
       const cap = new THREE.Mesh(new THREE.CircleGeometry(AR - 0.01, 18, 0, Math.PI), wellMat); cap.rotation.y = sx * Math.PI / 2; cap.position.set(sx * 0.6, TR, a); g.add(cap);
     }
     // greenhouse: roof, pillars (A raked, B, C, D), windscreen, side + rear glass
-    box(2 * HW - 0.1, 0.07, 2.66, paint, 0, ROOF - 0.035, -0.91, g, 0.03);
+    box(2 * HW - 0.04, 0.07, 2.66, paint, 0, ROOF - 0.035, -0.91, g, 0.03);   // wide enough to cap the glass tops
     const pillar = (sx, z, w) => box(0.05, ROOF - BELT, w, paint, sx * (HW - 0.045), (ROOF + BELT) / 2, z, g, 0.008);
     for (const sx of [-1, 1]) {
       pillar(sx, -0.56, 0.08); pillar(sx, -1.56, 0.09); pillar(sx, ZR + 0.06, 0.12);                   // B, C, D
       const a = box(0.06, 0.72, 0.07, paint, sx * (HW - 0.05), (BELT + ROOF) / 2, 0.52, g, 0.008); a.rotation.x = -0.29;   // A, raked
       for (const [z0, z1] of [[-0.6, -1.52], [-1.61, ZR + 0.12]]) {                                   // rear door + quarter glass
-        const gl = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(z1 - z0) - 0.02, 0.6), glass); gl.rotation.y = Math.PI / 2; gl.position.set(sx * (HW - 0.03), 1.57, (z0 + z1) / 2); g.add(gl);
+        const gl = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(z1 - z0) + 0.06, 0.69), glass); gl.rotation.y = Math.PI / 2; gl.position.set(sx * (HW - 0.03), 1.578, (z0 + z1) / 2); g.add(gl);
       }
     }
     { const gl = new THREE.Mesh(doorGlassGeo, glass); gl.position.x = HW - 0.025; g.add(gl); }        // passenger door glass
-    { const ws = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.2, 0.7), glass); ws.position.set(0, (BELT + ROOF) / 2 + 0.01, 0.53); ws.rotation.x = -0.29; g.add(ws); }  // windscreen
+    { const ws = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.08, 0.78), glass); ws.position.set(0, (BELT + ROOF) / 2, 0.525); ws.rotation.x = -0.29; g.add(ws); }  // windscreen, edges under the A pillars / header / cowl
     box(2 * HW - 0.1, 0.06, 0.08, paint, 0, ROOF - 0.04, 0.43, g, 0.01);                               // header
-    { const rg = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.26, 0.58), glass); rg.position.set(0, 1.58, ZR + 0.02); g.add(rg); }   // rear window
+    { const rg = new THREE.Mesh(new THREE.PlaneGeometry(2 * HW - 0.08, 0.69), glass); rg.position.set(0, 1.58, ZR + 0.02); g.add(rg); }   // rear window, edges under the D pillars / roof
     // cabin
     box(2 * HW - 0.12, 0.26, 0.42, trim, 0, 1.1, 0.42, g, 0.04);                                         // dashboard
     { const scr = box(0.78, 0.1, 0.025, screenMat, -0.2, 1.255, 0.25, g, 0.01); scr.rotation.x = -0.3; } // widescreen, low on the dash
