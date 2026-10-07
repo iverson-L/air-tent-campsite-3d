@@ -6648,7 +6648,7 @@ life = (() => {
     // roof glass read black; only the thin side bezels stay steel
     // the black frame round the top glass is now a FRAME (the shell under it is cut away): the apex bar, the 10 cm bar
     // behind the roof glass, and 3 cm strips along both top edges
-    { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.35, metalness: 0.2, side: THREE.DoubleSide });
+    { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.85, metalness: 0, side: THREE.DoubleSide });   // matte: glossy, its edges caught the sky as white lines
       glassTop(ZA + 0.03, ZA + 0.03, ZA - 0.03, 0, fm, 0.006); glassTop(-0.74, -0.74, -0.84, 0, fm, 0.006);
       const edge = (z0, z1, sx) => { const pos = [], idx = [], N = 12;
         // the outer edge tucks 6 mm out and 12 mm down over the side panel's top
@@ -6666,7 +6666,9 @@ life = (() => {
     // window band (per user, ct_sideview.png): the whole greenhouse side is BLACK — no steel between the panes — from
     // the sill up to just under the roof edge, with the glass laid on it. Its top is ONE straight line from the quarter
     // triangle's tip (z 2.2, on the sill) up to the roof apex, shared by the quarter glass and the front door glass.
-    const lo = z => sill(z) + 0.005, ZT = 2.2;
+    // the band starts just BELOW the sill (the shell above the sill is cut away): starting 5 mm above it left a hairline
+    // slit along every window's foot in the driver's view (per user)
+    const lo = z => sill(z) - 0.008, ZT = 2.2;
     const bandTop = z => z >= ZA ? lo(ZT) + (topY(ZA) - 0.015 - lo(ZT)) * (ZT - z) / (ZT - ZA) : topY(z) - 0.015;
     const cy = z => sill(z) + 0.02, ty = z => bandTop(z) - 0.02;
     let zq = ZT; while (ty(zq) - cy(zq) < 0.01) zq -= 0.005;                                              // glass tip, just inside the band's
@@ -6750,12 +6752,19 @@ life = (() => {
         const r = ring(z).map(([x, y]) => new THREE.Vector2(x * 0.96, Math.max(y0, y > 1 ? y - 0.01 : y)));
         const m = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(r)), new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.9, side: THREE.DoubleSide })); m.position.z = z; g.add(m); }
       // door trims up to the window sill (they hide the shell's inside); the driver's front one rides its door
-      const trimBox = (z0, z1, sx, parent) => { const top = lo(z0) - 0.012, h = top - 0.52, b = box(0.05, h, z0 - z1, trim, sx * (HW - 0.075), 0.52 + h / 2, (z0 + z1) / 2, parent, 0.01);
-        box(0.09, 0.03, (z0 - z1) * 0.7, wood, sx * (HW - 0.12), 1.0, (z0 + z1) / 2, parent, 0.008); return b; };   // armrest
+      // in ~0.2 m steps, so the top follows the rising sill (one flat box left a wedge-shaped gap of sky behind it)
+      const trimBox = (z0, z1, sx, parent) => { const n = Math.max(1, Math.ceil((z0 - z1) / 0.2)), dz = (z0 - z1) / n, grp = new THREE.Group(); parent.add(grp);
+        for (let i = 0; i < n; i++) { const za = z0 - i * dz, zb = za - dz, top = lo(zb) + 0.004, h = top - 0.52; box(0.05, h, dz + 0.004, trim, sx * (HW - 0.075), 0.52 + h / 2, (za + zb) / 2, grp, 0.006); }
+        box(0.09, 0.03, (z0 - z1) * 0.7, wood, sx * (HW - 0.12), 1.0, (z0 + z1) / 2, grp, 0.008); return grp; };   // + armrest
       for (const sx of [-1, 1]) { trimBox(2.0, 1.43, sx, g); trimBox(0.3, -0.8, sx, g); if (sx > 0) trimBox(1.42, 0.31, sx, g); }
-      { const t = trimBox(1.42, 0.31, -1, g), a = g.children.at(-1); for (const o of [t, a]) { g.remove(o); o.position.x += HW; o.position.z -= 1.43; doorPivot.add(o); } }
+      { const t = trimBox(1.42, 0.31, -1, g); g.remove(t); t.position.set(HW, 0, -1.43); doorPivot.add(t); }
       // dash: a long flat slab across the cabin under the windscreen, a soft lower fascia, the 18.5" screen in the middle
       box(2 * IW - 0.04, 0.07, 0.42, dashMat, 0, 1.12, 1.75, g, 0.03);
+      // dash top: rises from the dash's back edge to the windscreen's foot, so the dash meets the glass (a dark firewall
+      // with a strip of landscape over it read as a slit)
+      { const za = 1.55, zb = 2.05, ya = 1.155, yb = topY(2.05) - 0.004, wa = inset(ya, za) - 0.012, wb = inset(yb, zb) - 0.012;
+        const geo = new THREE.BufferGeometry().setFromPoints([[-wa, ya, za], [wa, ya, za], [wb, yb, zb], [-wa, ya, za], [wb, yb, zb], [-wb, yb, zb]].map(p => new THREE.Vector3(...p)));
+        geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.8, side: THREE.DoubleSide }))); }
       box(2 * IW - 0.08, 0.32, 0.3, trim, 0, 0.93, 1.85, g, 0.04);
       { const sc = box(0.42, 0.26, 0.025, screenMat, 0, 1.3, 1.56, g, 0.01); sc.rotation.x = -0.28; }
       { const ac = box(1.6, 0.012, 0.012, new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.3, metalness: 0.7 }), 0, 1.1, 1.54, g, 0.004); }   // vent strip
