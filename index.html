@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Interactive 3D campsite of Spark inflatable air tents — day and night, first-person walk mode." />
 <meta name="twitter:image" content="https://iverson-l.github.io/air-tent-campsite-3d/preview.jpg" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%E2%9B%BA%3C/text%3E%3C/svg%3E" />
-<link rel="stylesheet" href="style.css?v=2" />
+<link rel="stylesheet" href="style.css?v=3" />
 <script type="importmap">
 {
   "imports": {
@@ -69,7 +69,7 @@
     document.getElementById('ldStage').textContent = 'Still loading… slow connection'; }, 30000);
   // rotating tips while it loads
   (() => {
-    const tips = ['<b>Drag</b> to look around, <b>scroll</b> to zoom, <b>W A S D</b> to fly.',
+    const tips = ['<b>Drag</b> to look around, <b>W A S D</b> to fly.',
       'Press <b>4</b> for night — lanterns, string lights and fireflies come out.',
       'Press <b>5</b> for rain — it stays dry under the tents and the flysheet.',
       'Try <b>First person mode</b>, walk into the pond to swim and hold <b>C</b> to dive.',
@@ -126,7 +126,7 @@
   <details open><summary>Controls</summary>
     <div class="btn-row"><button id="shareBtn" class="btn">🔗 Copy view link</button><button id="photoBtn" class="btn">📷 Save photo</button></div>
     <label class="toggle"><span>On-screen controls</span><kbd>B</kbd><input type="checkbox" id="osControlsChk" checked /></label>
-    <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move the view · <kbd>Shift</kbd> slow · drag to orbit, scroll to zoom</div>
+    <div class="keys"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> fly · <kbd>Shift</kbd> slow · drag to look around</div>
   </details>
 
   <details><summary>About &amp; specs</summary>
@@ -142,7 +142,7 @@
 <!-- the app: main.js (+ style.css; main.js imports common.js, gclass.js, cybertruck.js and the generated tents.js).
      Run `python3 bump_version.py` before a push that changes any of them: it bumps every ?v= together, or browsers
      may keep an old file for ~10 min after a push (GitHub Pages caching) -->
-<script type="module" src="main.js?v=2"></script>
+<script type="module" src="main.js?v=3"></script>
 <div id="dbgInfo"></div>
 </body>
 </html>

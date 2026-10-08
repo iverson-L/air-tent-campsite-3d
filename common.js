@@ -1,5 +1,5 @@
 // Shared by main.js (the campsite) and cybertruck_mock.html: the computed sun-disc texture (the sky's sun sprite and
-// the headlight flares), shadowAll, and addBeams (vehicle headlights). Imported everywhere as './common.js?v=2'
+// the headlight flares), shadowAll, and addBeams (vehicle headlights). Imported everywhere as './common.js?v=3'
 // (one specifier, so it loads once).
 import * as THREE from 'three';
 
