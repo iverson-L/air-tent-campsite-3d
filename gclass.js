@@ -8,7 +8,7 @@
 // Builder: adds the G-Class to `scene` at world (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=1';
+import { addBeams, shadowAll } from './common.js?v=2';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 

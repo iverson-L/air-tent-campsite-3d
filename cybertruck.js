@@ -10,7 +10,7 @@
 // (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=1';
+import { addBeams, shadowAll } from './common.js?v=2';
 
 export function buildCybertruck(scene, at, rotY = 0) {
   let truckRig = null;
