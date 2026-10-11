@@ -10,7 +10,7 @@
 // (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=5';
+import { addBeams, shadowAll } from './common.js?v=6';
 
 export function buildCybertruck(scene, at, rotY = 0) {
   let truckRig = null;
@@ -330,7 +330,7 @@ export function buildCybertruck(scene, at, rotY = 0) {
         gr.addColorStop(0, '#000000'); gr.addColorStop(0.55, '#000000'); gr.addColorStop(0.7, '#161a1f'); gr.addColorStop(0.85, '#050607'); gr.addColorStop(1, '#0b0d10');
         x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
         return new THREE.MeshStandardMaterial({ color: 0x07090b, roughness: 0.06, metalness: 0.5, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.6 }); })();
-      const IW = HW - 0.06, DASH_Y = 1.3;                                  // inner half-width; the level dash shelf's top (the windscreen's foot sits on it)
+      const IW = HW - 0.06, DASH_Y = topY(2.04) - 0.006;                   // inner half-width; the level dash shelf's top = the windscreen glass's foot (≈ 1.35 m)
       box(2 * IW, 0.04, 2.42, trim, 0, 0.5, 0.39, g, 0.01);                 // floor (z −0.82 → 1.6; the front wheel arches span the width ahead of it)
       box(2 * IW, 0.47, 0.04, trim, 0, 0.735, 1.6, g, 0.01);                 // footwell front wall, up to the arch top
       // firewall and rear bulkhead: the shell's own cross-section, pulled in 4 %
@@ -354,9 +354,10 @@ export function buildCybertruck(scene, at, rotY = 0) {
       { const t = trimBox(1.42, 0.31, -1, g); g.remove(t); t.position.set(HW, 0, -1.43); doorPivot.add(t); }
       // dash: a slate slab across the cabin under the windscreen; under its front edge the WHITE band (a chunky
       // 14 cm fascia, the red ambient line along its top), then the dark lower dash
-      // the dash top is ONE LEVEL shelf (per user: "the dash area is level flat", cybertruck_interior3/4) at DASH_Y, running
-      // forward from the cabin edge (z 1.54) until it meets the raked top skin (z ≈ 2.22), so the windscreen's foot sits
-      // right on it. Before, a low slab plus a ramp up to the glass left a visible gap under the windscreen.
+      // the dash top is ONE LEVEL shelf (per user: "the dash area is level flat", cybertruck_interior3/4) at the height of
+      // the windscreen glass's foot (z 2.04), running forward from the cabin edge (z 1.54) just under it, so the glass
+      // sits right on the dash. A shelf at 1.30 m running on under the bonnet (bug4.png) left 18 cm of the bonnet's dark
+      // underside showing as a black strip between the dash and the glass; a ramp before that left a gap.
       { const zEnd = 2.84 - (DASH_Y - 1.1) / 0.76 * 2.33 - 0.005; box(2 * IW - 0.04, 0.07, zEnd - 1.54, slate, 0, DASH_Y - 0.035, (zEnd + 1.54) / 2, g, 0.012); }
       box(2 * IW - 0.02, 0.14, 0.17, white, 0, DASH_Y - 0.14, 1.625, g, 0.01);                                      // the white band: FLAT, crisp-edged front face (per user, cybertruck_interior3/4)
       box(2 * IW - 0.06, 0.006, 0.006, redLine, 0, DASH_Y - 0.074, 1.541, g, 0.002);                                // red ambient line
@@ -371,7 +372,7 @@ export function buildCybertruck(scene, at, rotY = 0) {
       // yoke (per the reference): a thick, nearly rectangular squircle rim (superellipse n ≈ 6: flat top and bottom,
       // tight round corners), a big black hub pad with thick side spokes running into the rim's sides, a thin satin trim
       // under the pad; on a dark column shroud running down-forward into the dash, in front of the driver
-      { const yk = new THREE.Group(); yk.position.set(-0.45, 1.13, 1.04); yk.rotation.x = 0.3; g.add(yk);   // face tipped up toward the driver
+      { const yk = new THREE.Group(); yk.position.set(-0.45, 1.16, 1.04); yk.rotation.x = 0.3; g.add(yk);   // face tipped up toward the driver
         const pts = []; for (let i = 0; i < 96; i++) { const a = i / 96 * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
           pts.push(new THREE.Vector3(0.19 * Math.sign(c) * Math.abs(c) ** (1 / 3), 0.14 * Math.sign(sn) * Math.abs(sn) ** (1 / 3), 0)); }
         yk.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 160, 0.026, 12, true), dashMat));
