@@ -10,7 +10,7 @@
 // (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=3';
+import { addBeams, shadowAll } from './common.js?v=4';
 
 export function buildCybertruck(scene, at, rotY = 0) {
   let truckRig = null;
@@ -210,20 +210,30 @@ export function buildCybertruck(scene, at, rotY = 0) {
     // the black frame round the top glass is now a FRAME (the shell under it is cut away): the apex bar, the 10 cm bar
     // behind the roof glass, and 3 cm strips along both top edges
     { const fm = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.85, metalness: 0, side: THREE.DoubleSide });   // matte: glossy, its edges caught the sky as white lines
-      glassTop(ZA + 0.03, ZA + 0.03, ZA - 0.03, 0, fm, 0.006); glassTop(-0.74, -0.74, -0.84, 0, fm, 0.006);
+      glassTop(ZA + 0.03, ZA + 0.03, ZA - 0.03, 0, fm, 0.006); glassTop(-0.74, -0.74, -0.87, 0, fm, 0.006);   // laps 3 cm onto the steel roof behind the cut: ending AT it, 6 mm up, left a sky slit seen from the seat
       const edge = (z0, z1, sx) => { const pos = [], idx = [], N = 12;
         // the outer edge tucks 6 mm out and 12 mm down over the side panel's top
         for (let i = 0; i <= N; i++) { const z = z0 + (z1 - z0) * i / N, y = topY(z) + 0.006, w = inset(topY(z), z); pos.push(sx * (w - 0.03), y, z, sx * (w + 0.006), y - 0.012, z); if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); } }
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, fm)); };
-      for (const sx of [-1, 1]) { edge(2.04, ZA, sx); edge(ZA, -0.84, sx); } }
-    glassTop(2.04, 2.04, ZA + 0.03, 0.025, glassMat);                                                       // windscreen: straight front edge (ct_topview / ct_43view)
-    glassTop(ZA - 0.03, ZA - 0.03, -0.74, 0.025, glassMat);                                                 // roof glass
+      for (const sx of [-1, 1]) { edge(2.04, ZA, sx); edge(ZA, -0.87, sx); } }
+    glassTop(2.04, 2.04, ZA + 0.015, 0.006, glassMat);    // edges lap 1.5–2.4 cm under the black strips / apex bar: no sky slits                                                       // windscreen: straight front edge (ct_topview / ct_43view)
+    glassTop(ZA - 0.015, ZA - 0.015, -0.755, 0.006, glassMat);                                                 // roof glass
     const vault = (() => {                                              // black slatted vault cover
       const c = document.createElement('canvas'); c.width = 32; c.height = 256; const x = c.getContext('2d');
       x.fillStyle = '#1c1d1f'; x.fillRect(0, 0, 32, 256); for (let i = 0; i < 256; i += 8) { x.fillStyle = '#0e0f10'; x.fillRect(0, i, 32, 2); }
       const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return new THREE.MeshStandardMaterial({ map: t, roughness: 0.6, metalness: 0.3 }); })();
     { const m = onTop(-0.86, -HL + 0.04, 0.12, 0.12, vault); const uv = []; for (const v of [[0, 0], [1, 0], [0, 1], [1, 1]]) uv.push(...v); m.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); }
-    const sideWin = (poly, sx) => panel(poly, sx, glassMat, 0.009);
+    // glass panes are OVERSIZE: 1.5 cm past their hole all round, tucked behind the black band. Cut to the hole, a pane
+    // sitting 4 mm outboard of its frame left a slit of untinted sky along every edge in the driver's view (per user)
+    const grow = (poly, d) => poly.map((p, i) => {
+      const a = poly[(i + poly.length - 1) % poly.length], b = poly[(i + 1) % poly.length];
+      const e1 = [p[0] - a[0], p[1] - a[1]], e2 = [b[0] - p[0], b[1] - p[1]], l1 = Math.hypot(...e1), l2 = Math.hypot(...e2);
+      const cw = Math.sign(poly.reduce((s, q, k) => { const r = poly[(k + 1) % poly.length]; return s + q[0] * r[1] - r[0] * q[1]; }, 0));
+      const n1 = [cw * e1[1] / l1, -cw * e1[0] / l1], n2 = [cw * e2[1] / l2, -cw * e2[0] / l2];   // outward edge normals
+      const m = [n1[0] + n2[0], n1[1] + n2[1]], ml = Math.hypot(...m), c = (m[0] * n1[0] + m[1] * n1[1]) / ml;   // c = cos(half the turn)
+      const k = Math.min(d / Math.max(c, 1e-3), 2.5 * d);                                                         // miter, capped at sharp tips
+      return [p[0] + m[0] / ml * k, p[1] + m[1] / ml * k]; });
+    const sideWin = (poly, sx) => panel(grow(poly, 0.015), sx, glassMat, 0.009);
     // window band (per user, ct_sideview.png): the whole greenhouse side is BLACK — no steel between the panes — from
     // the sill up to just under the roof edge, with the glass laid on it. Its top is ONE straight line from the quarter
     // triangle's tip (z 2.2, on the sill) up to the roof apex, shared by the quarter glass and the front door glass.
@@ -299,48 +309,146 @@ export function buildCybertruck(scene, at, rotY = 0) {
       for (const poly of [lowerPoly, footPoly, upPoly]) for (const mat of [steel, interiorMat]) {          // steel outside, dark inside
         const dp = panel(poly, -1, mat, 0.004); g.remove(dp); dp.position.set(HW, 0, -1.43); if (mat === interiorMat) dp.userData.noShadow = true; doorPivot.add(dp); }
       const db = panel(bandD, -1, bandMat, 0.008, [winF]); g.remove(db); db.position.set(HW, 0, -1.43); doorPivot.add(db);
-      const dw = panel(winF, -1, glassMat, 0.012); g.remove(dw); dw.position.set(HW, 0, -1.43); doorPivot.add(dw); }
-    // ---- basic interior (per user): floor, firewall, rear bulkhead, door trims, a long flat dash with the landscape
-    // centre screen, the squircle wheel (RHD: driver on −x), two front buckets, a 3-seat rear bench, a centre console
-    { const trim = new THREE.MeshStandardMaterial({ color: 0x2b2d30, roughness: 0.85 }), seatMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.7 });
-      const dashMat = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.6 }), wood = new THREE.MeshStandardMaterial({ color: 0x3a3e42, roughness: 0.4, metalness: 0.3 });
-      const screenMat = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 0.15, metalness: 0.3 });   // centre screen: black glass, off (per user)
-      const IW = HW - 0.06;                                                  // inner half-width
+      const dw = panel(grow(winF, 0.015), -1, glassMat, 0.012); g.remove(dw); dw.position.set(HW, 0, -1.43); doorPivot.add(dw); }
+    // ---- interior (per user: basic, then "update … cybertruck_interior.jpeg reference"; the photo is LHD, ours is RHD
+    // so it's mirrored: driver on −x): a slate dash top over a full-width WHITE band (with a thin red ambient line)
+    // that runs on along the door tops, dark lower dash and door cards, the floating landscape screen, a squircle yoke
+    // with a black hub, a tall console with a padded armrest and chrome-ringed cupholders, ribbed rubber mats on the
+    // floor and toe boards, angular pedals, a rear-view mirror pod under the apex bar, dark leather seats with grey
+    // stitching and red belt buckles
+    { const trim = new THREE.MeshStandardMaterial({ color: 0x2b2d30, roughness: 0.85 }), seatMat = new THREE.MeshStandardMaterial({ color: 0x1e2023, roughness: 0.62 });
+      const dashMat = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.6 }), wood = new THREE.MeshStandardMaterial({ color: 0x34373b, roughness: 0.55, metalness: 0.15 });
+      const slate = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 0.78 }), white = new THREE.MeshStandardMaterial({ color: 0xe6e4df, roughness: 0.42 });
+      const redLine = new THREE.MeshStandardMaterial({ color: 0xc8262c, roughness: 0.4, emissive: 0x9a1418, emissiveIntensity: 0.5 });
+      const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.2, metalness: 0.85 }), stitch = new THREE.MeshStandardMaterial({ color: 0x8b8e92, roughness: 0.7 });
+      const mats = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');   // ribbed rubber
+        x.fillStyle = '#17181a'; x.fillRect(0, 0, 64, 64); for (let i = 0; i < 64; i += 8) { x.fillStyle = '#2b2d31'; x.fillRect(0, i, 64, 3); x.fillStyle = '#0d0e0f'; x.fillRect(0, i + 3, 64, 1); }
+        const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(1, 6);
+        return new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, side: THREE.DoubleSide }); })();
+      const screenMat = (() => {   // centre screen: black glass, off (per user), with a faint diagonal sheen so it reads as glass, not a hole
+        const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), gr = x.createLinearGradient(0, 64, 64, 0);
+        gr.addColorStop(0, '#000000'); gr.addColorStop(0.55, '#000000'); gr.addColorStop(0.7, '#161a1f'); gr.addColorStop(0.85, '#050607'); gr.addColorStop(1, '#0b0d10');
+        x.fillStyle = gr; x.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+        return new THREE.MeshStandardMaterial({ color: 0x07090b, roughness: 0.06, metalness: 0.5, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.6 }); })();
+      const IW = HW - 0.06, DASH_Y = 1.3;                                  // inner half-width; the level dash shelf's top (the windscreen's foot sits on it)
       box(2 * IW, 0.04, 2.42, trim, 0, 0.5, 0.39, g, 0.01);                 // floor (z −0.82 → 1.6; the front wheel arches span the width ahead of it)
       box(2 * IW, 0.47, 0.04, trim, 0, 0.735, 1.6, g, 0.01);                 // footwell front wall, up to the arch top
       // firewall and rear bulkhead: the shell's own cross-section, pulled in 4 %
       for (const [z, y0] of [[2.02, 0.95], [-0.82, 0.48]]) {             // the firewall sits above the front arches
-        const r = ring(z).map(([x, y]) => new THREE.Vector2(x * 0.96, Math.max(y0, y > 1 ? y - 0.01 : y)));
+        const r = ring(z).map(([x, y]) => new THREE.Vector2(x * 0.96, Math.min(z > 0 ? DASH_Y - 0.02 : 9, Math.max(y0, y > 1 ? y - 0.01 : y))));   // the firewall stops under the dash shelf
         const m = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(r)), new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.9, side: THREE.DoubleSide })); m.position.z = z; g.add(m); }
-      // door trims up to the window sill (they hide the shell's inside); the driver's front one rides its door
-      // in ~0.2 m steps, so the top follows the rising sill (one flat box left a wedge-shaped gap of sky behind it)
-      const trimBox = (z0, z1, sx, parent) => { const n = Math.max(1, Math.ceil((z0 - z1) / 0.2)), dz = (z0 - z1) / n, grp = new THREE.Group(); parent.add(grp);
-        for (let i = 0; i < n; i++) { const za = z0 - i * dz, zb = za - dz, top = lo(zb) + 0.004, h = top - 0.52; box(0.05, h, dz + 0.004, trim, sx * (HW - 0.075), 0.52 + h / 2, (za + zb) / 2, grp, 0.006); }
-        box(0.09, 0.03, (z0 - z1) * 0.7, wood, sx * (HW - 0.12), 1.0, (z0 + z1) / 2, grp, 0.008); return grp; };   // + armrest
+      // door trims up to the window sill (they hide the shell's inside); the driver's front one rides its door. Each is
+      // ONE extruded side profile whose top follows the straight, rising sill (a flat box left a wedge of sky behind
+      // it; 0.2 m stepped boxes then showed as tiles in the white band): a dark card, and the white band on top of it
+      const trimBox = (z0, z1, sx, parent) => { const grp = new THREE.Group(); parent.add(grp);
+        const prof = (pts, depth, mat, xo) => { const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y))),
+            { depth, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 1 });
+          geo.rotateY(-Math.PI / 2); geo.translate(sx * xo + depth / 2, 0, 0); const m = new THREE.Mesh(geo, mat); grp.add(m); return m; };
+        const top = z => lo(z) + 0.004;
+        prof([[z0, 0.52], [z1, 0.52], [z1, top(z1) - 0.14], [z0, top(z0) - 0.14]], 0.05, trim, HW - 0.075);              // dark door card
+        prof([[z0, top(z0) - 0.15], [z1, top(z1) - 0.15], [z1, top(z1) - 0.004], [z0, top(z0) - 0.004]], 0.056, white, HW - 0.078);   // white upper band (as the dash's)
+        box(0.085, 0.035, (z0 - z1) * 0.62, wood, sx * (HW - 0.115), 0.86, (z0 + z1) / 2, grp, 0.01);                       // armrest ledge
+        { const pull = box(0.03, 0.05, 0.16, dashMat, sx * (HW - 0.14), 0.92, (z0 + z1) / 2 + (z0 - z1) * 0.18, grp, 0.008); pull.rotation.x = 0.35; }
+        return grp; };
       for (const sx of [-1, 1]) { trimBox(2.0, 1.43, sx, g); trimBox(0.3, -0.8, sx, g); if (sx > 0) trimBox(1.42, 0.31, sx, g); }
       { const t = trimBox(1.42, 0.31, -1, g); g.remove(t); t.position.set(HW, 0, -1.43); doorPivot.add(t); }
-      // dash: a long flat slab across the cabin under the windscreen, a soft lower fascia, the 18.5" screen in the middle
-      box(2 * IW - 0.04, 0.07, 0.42, dashMat, 0, 1.12, 1.75, g, 0.03);
-      // dash top: rises from the dash's back edge to the windscreen's foot, so the dash meets the glass (a dark firewall
-      // with a strip of landscape over it read as a slit)
-      { const za = 1.55, zb = 2.05, ya = 1.155, yb = topY(2.05) - 0.004, wa = inset(ya, za) - 0.012, wb = inset(yb, zb) - 0.012;
-        const geo = new THREE.BufferGeometry().setFromPoints([[-wa, ya, za], [wa, ya, za], [wb, yb, zb], [-wa, ya, za], [wb, yb, zb], [-wb, yb, zb]].map(p => new THREE.Vector3(...p)));
-        geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.8, side: THREE.DoubleSide }))); }
-      box(2 * IW - 0.08, 0.32, 0.3, trim, 0, 0.93, 1.85, g, 0.04);
-      { const sc = box(0.42, 0.26, 0.025, screenMat, 0, 1.3, 1.56, g, 0.01); sc.rotation.x = -0.28; }
-      { const ac = box(1.6, 0.012, 0.012, new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.3, metalness: 0.7 }), 0, 1.1, 1.54, g, 0.004); }   // vent strip
-      // squircle steering wheel on a short column, in front of the driver
-      { const sw = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.02, 10, 40), dashMat); sw.scale.set(1.05, 0.82, 1); sw.position.set(-0.45, 1.08, 1.4); sw.rotation.x = -0.3; g.add(sw);
-        const hub = box(0.12, 0.08, 0.05, dashMat, -0.45, 1.08, 1.41, g, 0.02); hub.rotation.x = -0.3;
-        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.3, 10), dashMat); col.position.set(-0.45, 1.06, 1.55); col.rotation.x = Math.PI / 2 - 0.3; g.add(col);
-        const spoke = box(0.32, 0.025, 0.02, dashMat, -0.45, 1.08, 1.405, g, 0.008); spoke.rotation.x = -0.3; }
-      // seats
-      const seat = (x, z, w) => { box(w, 0.13, 0.52, seatMat, x, 0.66, z, g, 0.05);
-        const back = box(w, 0.62, 0.12, seatMat, x, 1.0, z - 0.28, g, 0.05); back.rotation.x = -0.2; };
-      for (const x of [-0.45, 0.45]) { seat(x, 0.95, 0.52); box(0.3, 0.17, 0.1, seatMat, x, 1.41, 0.6, g, 0.04); }   // front buckets + headrests
-      seat(0, -0.28, 1.78); for (const x of [-0.58, 0, 0.58]) box(0.28, 0.14, 0.09, seatMat, x, 1.41, -0.64, g, 0.04);   // rear bench + headrests
-      box(0.26, 0.26, 0.75, trim, 0, 0.66, 1.05, g, 0.03);                // centre console
-      box(0.22, 0.02, 0.5, wood, 0, 0.8, 1.05, g, 0.008);
+      // dash: a slate slab across the cabin under the windscreen; under its front edge the WHITE band (a chunky
+      // 14 cm fascia, the red ambient line along its top), then the dark lower dash
+      // the dash top is ONE LEVEL shelf (per user: "the dash area is level flat", cybertruck_interior3/4) at DASH_Y, running
+      // forward from the cabin edge (z 1.54) until it meets the raked top skin (z ≈ 2.22), so the windscreen's foot sits
+      // right on it. Before, a low slab plus a ramp up to the glass left a visible gap under the windscreen.
+      { const zEnd = 2.84 - (DASH_Y - 1.1) / 0.76 * 2.33 - 0.005; box(2 * IW - 0.04, 0.07, zEnd - 1.54, slate, 0, DASH_Y - 0.035, (zEnd + 1.54) / 2, g, 0.012); }
+      box(2 * IW - 0.02, 0.14, 0.17, white, 0, DASH_Y - 0.14, 1.625, g, 0.01);                                      // the white band: FLAT, crisp-edged front face (per user, cybertruck_interior3/4)
+      box(2 * IW - 0.06, 0.006, 0.006, redLine, 0, DASH_Y - 0.074, 1.541, g, 0.002);                                // red ambient line
+      box(2 * IW - 0.08, DASH_Y - 0.21 - 0.72, 0.3, trim, 0, (DASH_Y - 0.21 + 0.72) / 2, 1.85, g, 0.04);   // lower dash
+      // the 18.5" landscape screen (47 × 29 cm), thin black bezel, black glass (off). Per cybertruck_interior2/4: centred,
+      // standing IN FRONT of the band, from just below its bottom edge to ~9 cm above the dash shelf, upright and square
+      // to the cabin (a slight lean and turn toward the driver read as tilted, per user)
+      { const sg = new THREE.Group(); sg.position.set(0, DASH_Y - 0.055, 1.512); g.add(sg);
+        box(0.475, 0.295, 0.018, dashMat, 0, 0, 0.01, sg, 0.006);                                                 // housing
+        box(0.465, 0.285, 0.004, screenMat, 0, 0, 0, sg, 0.002);                                                  // glass
+        box(0.14, 0.08, 0.04, dashMat, 0, -0.06, 0.03, sg, 0.012); }                                             // mount, behind it into the band
+      // yoke (per the reference): a thick, nearly rectangular squircle rim (superellipse n ≈ 6: flat top and bottom,
+      // tight round corners), a big black hub pad with thick side spokes running into the rim's sides, a thin satin trim
+      // under the pad; on a dark column shroud running down-forward into the dash, in front of the driver
+      { const yk = new THREE.Group(); yk.position.set(-0.45, 1.13, 1.04); yk.rotation.x = 0.3; g.add(yk);   // face tipped up toward the driver
+        const pts = []; for (let i = 0; i < 96; i++) { const a = i / 96 * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+          pts.push(new THREE.Vector3(0.19 * Math.sign(c) * Math.abs(c) ** (1 / 3), 0.14 * Math.sign(sn) * Math.abs(sn) ** (1 / 3), 0)); }
+        yk.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 160, 0.026, 12, true), dashMat));
+        const hubS = new THREE.Shape([[-0.085, 0.055], [0.085, 0.055], [0.07, -0.06], [-0.07, -0.06]].map(([x, y]) => new THREE.Vector2(x, y)));   // tapering pad
+        const hubG = new THREE.ExtrudeGeometry(hubS, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 3 });
+        hubG.translate(0, 0, -0.05); const hub = new THREE.Mesh(hubG, dashMat); yk.add(hub);
+        for (const sx of [-1, 1]) { const sp = box(0.13, 0.05, 0.034, dashMat, sx * 0.125, 0.005, -0.008, yk, 0.014); sp.rotation.z = sx * -0.05; }   // in the rim's plane, merging into its sides
+        box(0.06, 0.1, 0.028, dashMat, 0, -0.1, -0.022, yk, 0.012);                                          // lower spoke: the pad runs down into the rim's flat bottom
+        box(0.09, 0.008, 0.006, chrome, 0, -0.072, -0.058, yk, 0.003);                                         // satin trim under the pad
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.52, 14), dashMat); col.rotation.x = Math.PI / 2; col.position.set(0, -0.045, 0.29); yk.add(col); }   // low, so its end hides behind the hub pad
+      // floor: ribbed rubber mats in both footwells, sloped ribbed toe boards up to the footwell wall, angular pedals
+      for (const sx of [-1, 1]) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.75), mats); m.rotation.x = -Math.PI / 2; m.position.set(sx * 0.45, 0.522, 1.06); g.add(m);
+        const toe = new THREE.Mesh(new THREE.PlaneGeometry(0.56, Math.hypot(0.33, 0.17)), mats); toe.rotation.x = Math.atan2(0.17, 0.33); toe.position.set(sx * 0.45, 0.52 + 0.165, 1.43 + 0.085); g.add(toe); }   // toe board leans forward up to the footwell wall
+      for (const [x, w, l, f] of [[-0.57, 0.065, 0.2, 0.5], [-0.36, 0.11, 0.09, 0.62]]) {                     // accelerator (driver's right), brake
+        const pd = box(w, l, 0.014, chrome, x, 0.52 + 0.33 * f + 0.012, 1.43 + 0.17 * f - 0.02, g, 0.004); pd.rotation.x = Math.atan2(0.17, 0.33) - 0.15;   // a touch more upright than the toe board
+        box(w - 0.016, l - 0.03, 0.004, dashMat, x, 0.52 + 0.33 * f + 0.021, 1.43 + 0.17 * f - 0.027, g, 0.002).rotation.x = pd.rotation.x; }
+      // rear-view mirror pod hanging from the apex bar
+      // rear-view mirror (per user: position; cybertruck_interior2/3/4): it hangs from the TOP of the windscreen, at the
+      // apex bar, on an angular shroud (wide at the glass, narrowing down) that lies along the raked glass, with the
+      // mirror box hanging plumb under its front end. Hung lower down the windscreen it sat in the middle of the glass.
+      { const ang = Math.atan2(topY(ZA) - topY(ZA + 0.3), 0.3), mg = new THREE.Group();
+        mg.position.set(0, topY(ZA + 0.1) - 0.004, ZA + 0.1); mg.rotation.x = -ang; g.add(mg);                     // local +z runs down the glass
+        const sh = new THREE.Shape([[-0.11, 0], [0.11, 0], [0.05, -0.11], [-0.05, -0.11]].map(([x, y]) => new THREE.Vector2(x, y)));
+        const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 1 }); geo.translate(0, 0, -0.1);
+        mg.add(new THREE.Mesh(geo, dashMat));
+        const mb = box(0.25, 0.065, 0.03, dashMat, 0, -0.14, 0.06, mg, 0.01); mb.rotation.x = ang; }               // the mirror box, plumb
+      // A-pillars, roof rails and the header (per user: compare the A-pillar thickness and the ceiling, interior2/4): thick
+      // dark trim inside the glass. The A-pillar covers 11 cm of the windscreen's side edge and wraps 5 cm down the side
+      // glass, from the dash corner up to the apex; it runs on as a roof rail (8 cm in) to the back of the roof glass;
+      // a 20 cm header band spans the apex (the mirror hangs from it). Before, only the 3 cm black glass frame showed.
+      { const alc = new THREE.MeshStandardMaterial({ color: 0x2c2f33, roughness: 0.95, side: THREE.DoubleSide });
+        const edgeW = z => inset(topY(z), z);
+        const strip = (z0, z1, win, n, sx) => {                       // rows across the roof edge: lip, ceiling, corner, down the side
+          const pos = [], idx = [];
+          for (let i = 0; i <= n; i++) { const z = z0 + (z1 - z0) * i / n, y = topY(z) - 0.02, w = edgeW(z), yd = topY(z) - 0.05;
+            for (const [x, yy] of [[w - win, y - 0.03], [w - win, y], [w - 0.015, y], [inset(yd, z) - 0.015, yd]]) pos.push(sx * x, yy, z);
+            if (i) for (let k = 0; k < 3; k++) { const a = (i - 1) * 4 + k, b = a + 4; idx.push(a, b, a + 1, a + 1, b, b + 1); } }
+          const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+          const m = new THREE.Mesh(geo, alc); m.userData.noShadow = true; g.add(m); };
+        for (const sx of [-1, 1]) { strip(2.02, ZA, 0.11, 14, sx); strip(ZA, -0.86, 0.08, 12, sx); }
+        { const pos = [], idx = [], zs = [ZA + 0.13, ZA + 0.13, ZA, ZA - 0.07, ZA - 0.07], dy = [-0.05, -0.02, -0.02, -0.02, -0.045], NX = 8;   // header, with lips front + back
+          zs.forEach((z, j) => { const w = edgeW(z) - 0.02; for (let i = 0; i <= NX; i++) pos.push(-w + 2 * w * i / NX, topY(z) + dy[j], z);
+            if (j) for (let i = 0; i < NX; i++) { const a = (j - 1) * (NX + 1) + i, b = a + NX + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); } });
+          const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+          const m = new THREE.Mesh(geo, alc); m.userData.noShadow = true; g.add(m); } }
+      // seats: dark leather buckets with side bolsters, an integrated headrest and grey stitching; red belt buckles
+      const bucket = (x, z) => {
+        box(0.5, 0.11, 0.5, seatMat, x, 0.64, z, g, 0.04);
+        for (const sx of [-1, 1]) { box(0.07, 0.06, 0.48, seatMat, x + sx * 0.215, 0.715, z, g, 0.025); box(0.004, 0.004, 0.44, stitch, x + sx * 0.175, 0.697, z, g, 0.001); }
+        const bk = new THREE.Group(); bk.position.set(x, 0.69, z - 0.25); bk.rotation.x = -0.18; g.add(bk);
+        box(0.5, 0.74, 0.11, seatMat, 0, 0.37, 0, bk, 0.04); box(0.3, 0.17, 0.1, seatMat, 0, 0.82, -0.005, bk, 0.04);
+        for (const sx of [-1, 1]) { box(0.075, 0.58, 0.07, seatMat, sx * 0.215, 0.33, 0.06, bk, 0.025); box(0.004, 0.62, 0.004, stitch, sx * 0.172, 0.36, 0.057, bk, 0.001); }
+        box(0.025, 0.06, 0.035, redLine, x + Math.sign(-x) * 0.285, 0.73, z - 0.18, g, 0.006); };
+      for (const x of [-0.45, 0.45]) bucket(x, 0.7);   // driver's head just ahead of the B-pillar, behind the apex (the mirror hangs ahead of it)
+      { const bench = (x, w) => { box(w, 0.13, 0.52, seatMat, x, 0.66, -0.28, g, 0.05); const b = box(w, 0.62, 0.12, seatMat, x, 1.0, -0.56, g, 0.05); b.rotation.x = -0.2; };
+        bench(0, 1.78); for (const x of [-0.58, 0, 0.58]) box(0.28, 0.14, 0.09, seatMat, x, 1.41, -0.64, g, 0.04);
+        for (const x of [-0.3, 0.3]) box(0.004, 0.004, 0.48, stitch, x, 0.727, -0.28, g, 0.001); }
+      // centre console (per the reference): tall and dark; a padded armrest lid at the back; in front of it a block with
+      // two DEEP cupholders (real holes through an extruded block: satin top, dark walls, chrome rims) split by an
+      // angular chrome fin; then a sloped phone pad with a chrome edge running down into the lower dash
+      box(0.27, 0.3, 0.61, trim, 0, 0.67, 0.735, g, 0.03);                                                    // rear section
+      box(0.25, 0.08, 0.36, wood, 0, 0.85, 0.62, g, 0.035);                                                   // armrest lid, beside the seats
+      box(0.27, 0.2, 0.34, trim, 0, 0.62, 1.21, g, 0.02);                                                     // under the cup block
+      { const sh = new THREE.Shape([[-0.135, -0.17], [0.135, -0.17], [0.135, 0.17], [-0.135, 0.17]].map(([x, y]) => new THREE.Vector2(x, y)));
+        const cups = [[-0.058, 0.03], [0.058, 0.03]];
+        for (const [cx, cy] of cups) { const h = new THREE.Path(); h.absarc(cx, cy, 0.041, 0, Math.PI * 2, true); sh.holes.push(h); }
+        const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.1, bevelEnabled: false, curveSegments: 24 }); geo.rotateX(-Math.PI / 2);
+        const satin = new THREE.MeshStandardMaterial({ color: 0x8e9398, roughness: 0.35, metalness: 0.7 });
+        const blk = new THREE.Mesh(geo, [satin, trim]); blk.position.set(0, 0.72, 1.21); g.add(blk);          // caps satin, walls dark
+        { const fl = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.33), dashMat); fl.rotation.x = -Math.PI / 2; fl.position.set(0, 0.722, 1.21); g.add(fl); }   // cup floors
+        for (const [cx, cy] of cups) { const r = new THREE.Mesh(new THREE.TorusGeometry(0.042, 0.005, 8, 28), chrome); r.rotation.x = Math.PI / 2; r.position.set(cx, 0.822, 1.21 - cy); g.add(r); }
+        const fin = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape([[0, 0], [0.07, 0], [0.05, 0.05], [0.015, 0.05]].map(([x, y]) => new THREE.Vector2(x, y))), { depth: 0.008, bevelEnabled: false }), chrome);
+        fin.rotation.y = Math.PI / 2; fin.position.set(-0.004, 0.8, 1.21 - 0.03 + 0.035); g.add(fin); }      // angular divider between the cups
+      { const pad = new THREE.Group(); pad.position.set(0, 0.79, 1.47); pad.rotation.x = 0.5; g.add(pad);    // phone pad, sloping into the dash
+        box(0.25, 0.04, 0.24, trim, 0, 0, 0, pad, 0.015); box(0.2, 0.004, 0.16, screenMat, 0, 0.021, 0, pad, 0.002);
+        for (const sx of [-1, 1]) box(0.004, 0.006, 0.16, chrome, sx * 0.1, 0.023, 0, pad, 0.001); }
     }
     // wheels: lathed 35" tyres with a dark 6-spoke rim (dynamic: they spin and steer when driven)
     // tyre lip (r 0.26) tucks over a rim that runs the full tyre width — a 2 cm see-through ring showed at the rim before
@@ -361,8 +469,11 @@ export function buildCybertruck(scene, at, rotY = 0) {
     g.position.set(at[0], 0, at[1]); g.rotation.y = rotY;
     scene.add(shadowAll(g));
     g.traverse(o => { if (o.isMesh && (o.material === dark || o.material === glassMat || o.userData.noShadow)) o.castShadow = false; });
+    // glass draws AFTER the dirt road's soft-edged ribbons (renderOrder 0–4): it doesn't write depth, so the road drew
+    // over it untinted and looked clear through the windows while the grass behind was tinted dark (per user)
+    g.traverse(o => { if (o.isMesh && o.material === glassMat) o.renderOrder = 10; });
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
-    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: { x: -0.45, y: 1.45, z: 0.72 },   // driver's view (V)
+    truckRig = { g, doorPivot, beams, lensMat: barMat, tailMat, steel, wheels, TR, beamGroup, beamMat, flareMat, seatEye: { x: -0.45, y: 1.52, z: 0.47 },   // driver's view (V)
       WB: 3.81, MAXF: 18, ACC: 7.8, BRK: 11, R: 1.12, circles: [-1.95, -0.65, 0.65, 1.95], doorLocal: [-1.75, 0, 0.9], camDist: 8, ev: true, name: 'Cybertruck' };
   }
   return truckRig;

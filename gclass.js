@@ -8,7 +8,7 @@
 // Builder: adds the G-Class to `scene` at world (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=3';
+import { addBeams, shadowAll } from './common.js?v=4';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -30,7 +30,7 @@ export function buildGClass(scene, at, rotY = 0) {
     const AX = [1.42, -1.47], AR = 0.47;                                 // axles (z) and arch radius
     const box = (w, h, d, mat, x, y, z, parent = g, r = 0.012) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2)), mat); m.position.set(x, y, z); parent.add(m); return m; };
     // side panel piece between z0..z1: bottom follows the wheel arches, top = beltline (cabin) / hood line (front)
-    const bottomY = z => { for (const a of AX) if (Math.abs(z - a) < AR) return TR + Math.sqrt(AR * AR - (z - a) ** 2); return BOT; };
+    const bottomY = z => { for (const a of AX) if (Math.abs(z - a) < AR) return Math.max(BOT, TR + Math.sqrt(AR * AR - (z - a) ** 2)); return BOT; };   // no thin legs below the sill line at the arch ends
     const topY = z => z > 0.62 ? 1.22 - 0.02 * (z - 0.62) / (ZF - 0.62) : BELT;
     const sidePiece = (z0, z1, sx, mat = paint) => {
       const pts = [];
@@ -64,7 +64,11 @@ export function buildGClass(scene, at, rotY = 0) {
     box(2 * HW - 0.09, 0.2, ZF - 0.62, paint, 0, 1.115, (ZF + 0.62) / 2, g, 0.03);
     box(2 * HW - 0.1, 0.42, 0.04, black, 0, 0.83, ZF - 0.02);
     for (let i = 0; i < 4; i++) box(0.98, 0.028, 0.03, satin, 0, 0.78 + i * 0.085, ZF + 0.012);         // grille slats
-    box(2 * HW - 0.08, 0.05, ZF - ZR - 0.1, trim, 0, BOT + 0.02, 0);                                    // floor
+    // floor: full width only between / outside the arches; through the wheel wells it stays inside them (the full-width
+    // slab ran through every arch as a horizontal bar behind the tyre, per user)
+    box(1.16, 0.05, ZF - ZR - 0.1, trim, 0, BOT + 0.02, 0);
+    for (const sx of [-1, 1]) for (const [z0, z1] of [[AX[1] + AR + 0.02, AX[0] - AR - 0.02], [AX[0] + AR + 0.02, ZF - 0.05], [ZR + 0.05, AX[1] - AR - 0.02]])
+      box(HW - 0.62, 0.05, z1 - z0, trim, sx * (HW + 0.58) / 2 - sx * 0.02, BOT + 0.02, (z0 + z1) / 2);
     // rear door (side-hinged on local −x, as on the G-Class): lower panel, window and the spare wheel swing together
     const rearPivot = new THREE.Group(); rearPivot.position.set(-HW + 0.03, 0, ZR); rearPivot.userData.dynamic = true; g.add(rearPivot);
     const RX = HW - 0.03;                                                                               // pivot-local x of the car's centreline
@@ -72,9 +76,12 @@ export function buildGClass(scene, at, rotY = 0) {
     box(0.05, ROOF - BELT - 0.08, 0.05, paint, RX + HW - 0.07, (ROOF + BELT) / 2 - 0.03, 0.03, rearPivot, 0.008);   // its window frame (latch side)
     box(2 * HW - 0.12, 0.05, 0.05, paint, RX, ROOF - 0.09, 0.03, rearPivot, 0.008);                                 // frame top
     for (const a of AX) for (const sx of [-1, 1]) {                                                    // wheel wells (hide the cabin through the arches)
-      const w = new THREE.Mesh(new THREE.CylinderGeometry(AR - 0.01, AR - 0.01, 0.34, 18, 1, true, 0, Math.PI), wellMat);   // upper half
-      w.rotation.z = Math.PI / 2; w.position.set(sx * 0.77, TR, a); g.add(w);
-      const cap = new THREE.Mesh(new THREE.CircleGeometry(AR - 0.01, 18, 0, Math.PI), wellMat); cap.rotation.y = sx * Math.PI / 2; cap.position.set(sx * 0.6, TR, a); g.add(cap);
+      // only the arc the flare spans, and inside the body side: running out 2 cm past the panel and down to the axle line,
+      // its ends showed as black tabs under each flare end
+      const wa = Math.asin((BOT - 0.03 - TR) / (AR - 0.02));
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(AR - 0.02, AR - 0.02, 0.33, 24, 1, true, wa, Math.PI - 2 * wa), wellMat);
+      w.rotation.z = Math.PI / 2; w.position.set(sx * 0.755, TR, a); g.add(w);
+      const cap = new THREE.Mesh(new THREE.CircleGeometry(AR - 0.02, 24, wa, Math.PI - 2 * wa), wellMat); cap.rotation.y = sx * Math.PI / 2; cap.position.set(sx * 0.6, TR, a); g.add(cap);
     }
     // greenhouse: roof, pillars (A raked, B, C, D), windscreen, side + rear glass
     box(2 * HW - 0.04, 0.07, 2.66, paint, 0, ROOF - 0.035, -0.91, g, 0.03);   // wide enough to cap the glass tops
@@ -110,7 +117,8 @@ export function buildGClass(scene, at, rotY = 0) {
     // black bits: flares, sills, rub strips, bumpers, handles, mirrors
     for (const sx of [-1, 1]) {
       for (const a of AX) {
-        const s = new THREE.Shape(); s.absarc(0, 0, AR + 0.07, 0.12, Math.PI - 0.12, false); s.absarc(0, 0, AR + 0.005, Math.PI - 0.12, 0.12, true);
+        const a0 = Math.asin((BOT - 0.03 - TR) / AR);                     // flare ends just below the sill line
+        const s = new THREE.Shape(); s.absarc(0, 0, AR + 0.07, a0, Math.PI - a0, false); s.absarc(0, 0, AR - 0.015, Math.PI - a0, a0, true);   // inner edge over the panel's arch edge
         const fg = new THREE.ExtrudeGeometry(s, { depth: 0.075, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.01, bevelSegments: 2, curveSegments: 20 });
         fg.rotateY(sx > 0 ? Math.PI / 2 : -Math.PI / 2); const f = new THREE.Mesh(fg, black); f.position.set(sx * (HW - 0.02), TR, a); g.add(f);
       }
@@ -147,11 +155,13 @@ export function buildGClass(scene, at, rotY = 0) {
       const w = new THREE.Group(); w.position.set(x, y, z); w.rotation.set(0, rotY, 0, 'YXZ'); parent.add(w);
       const t = new THREE.Mesh(tyreGeo, rubber); t.rotation.z = Math.PI / 2; w.add(t);
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.24, 24, 1, true), satin); barrel.rotation.z = Math.PI / 2; w.add(barrel);
-      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.02, 24), rimDark); face.rotation.z = Math.PI / 2; face.position.x = 0.06; w.add(face);
+      // the rim's face and lip sit out at the tyre's bead, its lip lapping onto the sidewall (recessed 5 cm with a dark
+      // barrel ring round it, the rim looked separate from the tyre, per user)
+      const face = new THREE.Mesh(new THREE.CylinderGeometry(0.245, 0.245, 0.02, 28), rimDark); face.rotation.z = Math.PI / 2; face.position.x = 0.095; w.add(face);
       for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2, sp = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.065), silver);
-        sp.position.set(0.085, Math.cos(a) * 0.12, Math.sin(a) * 0.12); sp.rotation.x = a; w.add(sp); }
-      const rimR = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.02, 6, 28), silver); rimR.rotation.y = Math.PI / 2; rimR.position.x = 0.085; w.add(rimR);
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.04, 16), silver); cap.rotation.z = Math.PI / 2; cap.position.x = 0.1; w.add(cap);
+        sp.position.set(0.112, Math.cos(a) * 0.12, Math.sin(a) * 0.12); sp.rotation.x = a; w.add(sp); }
+      const rimR = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.022, 8, 32), silver); rimR.rotation.y = Math.PI / 2; rimR.position.x = 0.118; w.add(rimR);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.04, 16), silver); cap.rotation.z = Math.PI / 2; cap.position.x = 0.13; w.add(cap);
       return w;
     };
     for (const a of AX) for (const sx of [-1, 1]) { const w = wheel(g, sx * 0.8, TR, a, sx > 0 ? 0 : Math.PI); w.userData.dynamic = true; wheels.push({ w, front: a > 0, sx, base: w.rotation.y }); }
@@ -162,7 +172,7 @@ export function buildGClass(scene, at, rotY = 0) {
     const { beams, beamGroup, beamMat, flareMat } = addBeams(g, [-0.68, 0.68].map(x => [x, 0.98, ZF + 0.06]));
     g.position.set(at[0], 0, at[1]); g.rotation.y = rotY;
     scene.add(shadowAll(g));
-    g.traverse(o => { if (o.isMesh && o.material === glass) o.castShadow = false; });                    // glass lets the sun in
+    g.traverse(o => { if (o.isMesh && o.material === glass) { o.castShadow = false; o.renderOrder = 10; } });   // glass lets the sun in; drawn after the road's soft ribbons
     beamGroup.traverse(o => { o.castShadow = o.receiveShadow = false; });
     carRig = { g, doorPivot, rearPivot, beams, lensMat, tailMat, wheels, TR, seatEye: V(-0.42, 1.5, -0.3), beamGroup, beamMat, flareMat,
       WB: 2.89, MAXF: 12.5, ACC: 4.2, BRK: 9, R: 1.0, circles: [-1.45, 0, 1.45], doorLocal: [-1.55, 0, 0.1], camDist: 6.4, ev: false, name: 'G-Class' };

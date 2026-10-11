@@ -1,5 +1,6 @@
 # third-party reference photos (product images) — kept locally, not published
 *.jpg
+*.jpeg
 *.png
 *.webp
 # …except our own link-preview / README image
