@@ -1,5 +1,5 @@
 // Shared by main.js (the campsite) and cybertruck_mock.html: the computed sun-disc texture (the sky's sun sprite and
-// the headlight flares), shadowAll, and addBeams (vehicle headlights). Imported everywhere as './common.js?v=12'
+// the headlight flares), shadowAll, and addBeams (vehicle headlights). Imported everywhere as './common.js?v=13'
 // (one specifier, so it loads once).
 import * as THREE from 'three';
 
@@ -31,7 +31,7 @@ export const shadowAll = g => { g.traverse(o => { if (o.isMesh) o.castShadow = o
 export function addBeams(g, lamps, col = {}) {          // col: { light, beam, flare } colours (default: warm halogen)
   const beams = lamps.map(([x, y, z]) => {
     const l = new THREE.SpotLight(col.light ?? 0xfff2dc, 0, 40, 0.62, 0.6, 2); l.position.set(x, y, z + 0.04);
-    l.target.position.set(x * 1.3, 0, z + 14); g.add(l, l.target); l.visible = false; return l;
+    l.target.position.set(x * 1.3, 0, z + 14); g.add(l, l.target); return l;   // always visible, intensity 0 when off: hiding it changed the light count (shader rebuilds)
   });
   const beamGroup = new THREE.Group(); beamGroup.userData.dynamic = true; beamGroup.visible = false; g.add(beamGroup);
   const BL = 9, coneGeo = new THREE.ConeGeometry(1.9, BL, 28, 8, true);
