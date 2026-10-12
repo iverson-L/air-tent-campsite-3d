@@ -10,7 +10,7 @@
 // (x, z) = at, heading rotY, and returns its rig for `car` in main.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { addBeams, shadowAll } from './common.js?v=6';
+import { addBeams, shadowAll } from './common.js?v=7';
 
 export function buildCybertruck(scene, at, rotY = 0) {
   let truckRig = null;
@@ -193,6 +193,7 @@ export function buildCybertruck(scene, at, rotY = 0) {
     };
     // windscreen + roof glass (per user: rework, thin bezel): glass panels lying on the top skin, only 2.5 cm in from
     // the edges, the windscreen's front edge arching forward at the centre (as in the top view), a thin bar at the apex
+    const WS_Z = 2.08;   // windscreen foot: 4 cm past the top-skin cut (2.04) onto the bonnet, so from the seat the dash meets glass, not a strip of bare bonnet (per user)
     const glassTop = (zfC, zfS, zb, m, mat, dy = 0.009) => {                        // zfC / zfS: front edge at the centre / sides
       const M = 14, N = 10, pos = [], idx = [];
       for (let i = 0; i <= N; i++) for (let j = 0; j <= M; j++) {
@@ -215,8 +216,8 @@ export function buildCybertruck(scene, at, rotY = 0) {
         // the outer edge tucks 6 mm out and 12 mm down over the side panel's top
         for (let i = 0; i <= N; i++) { const z = z0 + (z1 - z0) * i / N, y = topY(z) + 0.006, w = inset(topY(z), z); pos.push(sx * (w - 0.03), y, z, sx * (w + 0.006), y - 0.012, z); if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); } }
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, fm)); };
-      for (const sx of [-1, 1]) { edge(2.04, ZA, sx); edge(ZA, -0.87, sx); } }
-    glassTop(2.04, 2.04, ZA + 0.015, 0.006, glassMat);    // edges lap 1.5–2.4 cm under the black strips / apex bar: no sky slits                                                       // windscreen: straight front edge (ct_topview / ct_43view)
+      for (const sx of [-1, 1]) { edge(WS_Z, ZA, sx); edge(ZA, -0.87, sx); } }
+    glassTop(WS_Z, WS_Z, ZA + 0.015, 0.006, glassMat);    // edges lap 1.5–2.4 cm under the black strips / apex bar: no sky slits                                                       // windscreen: straight front edge (ct_topview / ct_43view)
     glassTop(ZA - 0.015, ZA - 0.015, -0.755, 0.006, glassMat);                                                 // roof glass
     const vault = (() => {                                              // black slatted vault cover
       const c = document.createElement('canvas'); c.width = 32; c.height = 256; const x = c.getContext('2d');
